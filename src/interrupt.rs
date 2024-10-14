@@ -48,6 +48,7 @@ pub fn setup_interrupt_handler(
     Ok(())
 }
 
+/// Resets the signal handling for SIGPIPE to the default behavior on Unix systems.
 #[cfg(unix)]
 pub fn reset_sigpipe() {
     unsafe {

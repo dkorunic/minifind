@@ -34,12 +34,16 @@ fn main() -> Result<(), Error> {
     let args = args::Args::parse();
     let shutdown = &Arc::new(AtomicBool::new(false));
 
+    // reset SIGPIPE signal handling
     interrupt::reset_sigpipe();
 
     // interrupt handler
     interrupt::setup_interrupt_handler(shutdown)?;
 
+    // build ignore walkers for all paths specified
     let walker = walk::build_walker(&args, &args.path);
+
+    // output/print channel
     let (tx, rx) = unbounded::<DirEntry>();
 
     // output thread
@@ -48,6 +52,9 @@ fn main() -> Result<(), Error> {
 
         for ent in rx {
             stdout.write_all(&Vec::from_path_lossy(ent.path())).unwrap_or(());
+            if ent.path().is_dir() {
+                stdout.write_all(b"/").unwrap_or(());
+            }
             stdout.write_all(b"\n").unwrap_or(());
         }
 
@@ -62,11 +69,13 @@ fn main() -> Result<(), Error> {
                 match tx.send(e) {
                     Ok(()) => {}
                     Err(_) => {
+                        // on channel errors stop walking
                         return WalkState::Quit;
                     }
                 }
             }
 
+            // on stop signals stop walking
             if shutdown.load(Ordering::Relaxed) {
                 WalkState::Quit
             } else {
