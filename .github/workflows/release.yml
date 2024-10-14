@@ -1,0 +1,149 @@
+name: release
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+jobs:
+  create-release:
+    name: create-release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.release.outputs.upload_url }}
+      fl_version: ${{ env.FL_VERSION }}
+    steps:
+      - name: Get the release version from the tag
+        shell: bash
+        if: env.FL_VERSION == ''
+        run: |
+          echo "FL_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "version is: ${{ env.FL_VERSION }}"
+      - name: Create GitHub release
+        id: release
+        uses: actions/create-release@v1.1.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.FL_VERSION }}
+          release_name: ${{ env.FL_VERSION }}
+
+  build-release:
+    name: build-release
+    needs: ["create-release"]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    env:
+      CARGO: cargo
+      TARGET_FLAGS: ""
+      TARGET_DIR: ./target
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        build:
+          [
+            linux-amd64,
+            linux-arm32,
+            linux-arm64,
+            linux-riscv64,
+            linux-powerpc64,
+            linux-s390,
+            illumos-amd64,
+            macos-amd64,
+            macos-m1,
+          ]
+        include:
+          - build: linux-amd64
+            os: ubuntu-latest
+            rust: stable
+            target: x86_64-unknown-linux-musl
+            experimental: false
+          - build: linux-arm32
+            os: ubuntu-latest
+            rust: stable
+            target: arm-unknown-linux-musleabihf
+            experimental: false
+          - build: linux-arm64
+            os: ubuntu-latest
+            rust: stable
+            target: aarch64-unknown-linux-musl
+            experimental: false
+          - build: linux-riscv64
+            os: ubuntu-latest
+            rust: stable
+            target: riscv64gc-unknown-linux-gnu
+            experimental: true
+          - build: linux-powerpc64
+            os: ubuntu-latest
+            rust: stable
+            target: powerpc64-unknown-linux-gnu
+            experimental: true
+          - build: linux-s390
+            os: ubuntu-latest
+            rust: stable
+            target: s390x-unknown-linux-gnu
+            experimental: true
+          - build: illumos-amd64
+            os: ubuntu-latest
+            rust: stable
+            target: x86_64-unknown-illumos
+            experimental: true
+          - build: macos-amd64
+            os: macos-latest
+            rust: stable
+            target: x86_64-apple-darwin
+            experimental: false
+          - build: macos-m1
+            os: macos-latest
+            rust: stable
+            target: aarch64-apple-darwin
+            experimental: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.target }}
+
+      - name: Use Cross
+        shell: bash
+        run: |
+          cargo install cross
+          echo "CARGO=cross" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.TARGET_FLAGS }}"
+          echo "target dir is: ${{ env.TARGET_DIR }}"
+
+      - name: Build release binary
+        run: ${{ env.CARGO }} build --verbose --release ${{ env.TARGET_FLAGS }}
+
+      - name: Build archive
+        shell: bash
+        run: |
+          outdir="$(ci/cargo-out-dir "${{ env.TARGET_DIR }}")"
+          staging="minifind-${{ needs.create-release.outputs.fl_version }}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp {README.md,LICENSE} "$staging"
+          cp "target/${{ matrix.target }}/release/minifind" "$staging"
+          tar -cJf "$staging.tar.xz" "$staging"
+          echo "ASSET=$staging.tar.xz" >> $GITHUB_ENV
+
+      - name: Upload release archive
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ env.ASSET }}
+          asset_name: ${{ env.ASSET }}
+          asset_content_type: application/octet-stream
