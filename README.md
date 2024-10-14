@@ -7,7 +7,7 @@
 
 ## About
 
-`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and nothing else.
+`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and nothing else. Directories have trailing slash added.
 
 It will not follow filesystem symlinks and it will not cross filesystem boundaries by default. Number of threads used is set to the number of available CPU cores in the system.
 
