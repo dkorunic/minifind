@@ -20,14 +20,15 @@ Arguments:
   <PATH>...  Paths to check for large directories
 
 Options:
-  -f, --follow-symlinks <FOLLOW_SYMLINKS>  Follow symlinks [default: false] [possible values: true, false]
-  -o, --one-filesystem <ONE_FILESYSTEM>    Do not cross mount points [default: true] [possible values: true, false]
-  -x, --threads <THREADS>                  Number of threads to use when calibrating and scanning [default: 20]
-  -d, --max-depth <MAX_DEPTH>              Maximum depth to traverse
-  -n, --name <NAME>                        Base of the file name matching globbing pattern
-  -r, --regex <REGEX>                      File name (full path) matching regular expression pattern
-  -h, --help                               Print help
-  -V, --version                            Print version
+  -f, --follow-symlinks <FOLLOW_SYMLINKS>    Follow symlinks [default: false] [possible values: true, false]
+  -o, --one-filesystem <ONE_FILESYSTEM>      Do not cross mount points [default: true] [possible values: true, false]
+  -x, --threads <THREADS>                    Number of threads to use when calibrating and scanning [default: 20]
+  -d, --max-depth <MAX_DEPTH>                Maximum depth to traverse
+  -n, --name <NAME>                          Base of the file name matching globbing pattern
+  -r, --regex <REGEX>                        File name (full path) matching regular expression pattern
+  -i, --case-insensitive <CASE_INSENSITIVE>  Case-insensitive matching for globbing and regular expression patterns [default: false] [possible values: true, false]
+  -h, --help                                 Print help
+  -V, --version                              Print version
 ```
 
 ### Regular expressions

@@ -39,6 +39,10 @@ pub struct Args {
     #[clap(short = 'r', long, value_parser, conflicts_with = "name")]
     pub regex: Option<Vec<String>>,
 
+    /// Case-insensitive matching for globbing and regular expression patterns
+    #[clap(short = 'i', long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub case_insensitive: bool,
+
     /// Paths to check for large directories
     #[clap(required = true, value_parser, value_hint = ValueHint::AnyPath)]
     pub path: Vec<PathBuf>,

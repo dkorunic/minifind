@@ -46,10 +46,11 @@ fn main() -> Result<(), Error> {
     let walker = walk::build_walker(&args, &args.path);
 
     // build name GlobSet
-    let glob_name = glob::build_glob_set(&args.name)?;
+    let glob_name = glob::build_glob_set(&args.name, args.case_insensitive)?;
 
     // build regex RegexSet
-    let regex_name = regex::build_regex_set(&args.regex)?;
+    let regex_name =
+        regex::build_regex_set(&args.regex, args.case_insensitive)?;
 
     // output/print channel
     let (tx, rx) = unbounded::<DirEntry>();
