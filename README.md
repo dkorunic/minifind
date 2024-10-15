@@ -7,11 +7,13 @@
 
 ## About
 
-`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and little else. For filename or path matching, it is possible to use `--name` or `--regex` options, toggling case insensitivity with `--case-insensitive` or not.
+`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and little else. For filename or path matching, it is possible to use `--name` or `--regex` options, toggling case insensitivity with `--case-insensitive` or not. Additionally to narrow down matches, it is possible to use `--file-type` option and filter by file type (`f` for files, `d` for directories and `l` for symlinks).
 
 It will not follow filesystem symlinks and it will not cross filesystem boundaries by default. Number of threads used is set to the number of available CPU cores in the system.
 
-Let us also mention other notable projects dealing with this task one way or another:
+## Related projects
+
+Let us also mention other notable projects dealing with this task:
 
 - [sharkdp/fd](https://github.com/sharkdp/fd) which is a much more featured find alternative but with excellent performance,
 - [LyonSyonII/hunt-rs](https://github.com/LyonSyonII/hunt-rs), a very similar high performance-oriented tool,
@@ -34,6 +36,8 @@ Options:
   -n, --name <NAME>                          Base of the file name matching globbing pattern
   -r, --regex <REGEX>                        File name (full path) matching regular expression pattern
   -i, --case-insensitive <CASE_INSENSITIVE>  Case-insensitive matching for globbing and regular expression patterns [default: false] [possible values: true, false]
+  -t, --file-type <FILE_TYPE>                Filter matches by type. Also accepts 'f', 'd', and 'l' [default: directory file symlink] [possible values: file,
+                                             directory, symlink]
   -h, --help                                 Print help
   -V, --version                              Print version
 ```
