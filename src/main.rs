@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::thread;
 
 mod args;
+mod filetype;
 mod glob;
 mod interrupt;
 mod regex;
@@ -42,9 +43,6 @@ fn main() -> Result<(), Error> {
     // interrupt handler
     interrupt::setup_interrupt_handler(shutdown)?;
 
-    // build ignore walkers for all paths specified
-    let walker = walk::build_walker(&args, &args.path);
-
     // build name GlobSet
     let glob_name = glob::build_glob_set(&args.name, args.case_insensitive)?;
     let glob_enabled = args.name.is_some();
@@ -59,35 +57,49 @@ fn main() -> Result<(), Error> {
 
     // output thread
     let print_thread = thread::spawn(move || {
-        let mut stdout = BufWriter::new(io::stdout());
+        let mut stdout = BufWriter::new(io::stdout().lock());
 
-        for ent in rx {
+        for dir_entry in rx {
             // glob filename matching if --name option was provided
-            if glob_enabled && !glob_name.is_match(ent.file_name()) {
+            if glob_enabled && !glob_name.is_match(dir_entry.file_name()) {
                 continue;
             }
 
             // regex full path matching if --regex option was provided
             if regex_enabled
-                && !regex_name.is_match(regex::path_to_bytes(&ent.path()))
+                && !regex_name
+                    .is_match(regex::path_to_bytes(&dir_entry.path()))
             {
                 continue;
             }
 
             // buffered output
-            stdout.write_all(&Vec::from_path_lossy(ent.path())).unwrap_or(());
+            stdout
+                .write_all(&Vec::from_path_lossy(dir_entry.path()))
+                .unwrap_or(());
             stdout.write_all(b"\n").unwrap_or(());
         }
 
         stdout.flush().unwrap_or(());
     });
 
+    // build ignore walkers for all paths specified
+    let walker = walk::build_walker(&args, &args.path);
+
     // walker threads
     walker.run(|| {
         let tx = tx.clone();
-        Box::new(move |dir_entry_result| {
-            if let Ok(e) = dir_entry_result {
-                match tx.send(e) {
+        let filetype = filetype::FileType::new(&args.file_type);
+
+        Box::new(move |dir_entry| {
+            if let Ok(dir_entry) = dir_entry {
+                // check if filetype should be ignored
+                if filetype.ignore_filetype(&dir_entry) {
+                    return WalkState::Continue;
+                }
+
+                // send to output/print channel
+                match tx.send(dir_entry) {
                     Ok(()) => {}
                     Err(_) => {
                         // on channel errors stop walking

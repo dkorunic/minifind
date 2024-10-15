@@ -1,8 +1,8 @@
 use anstyle::AnsiColor;
 use anyhow::{anyhow, Error};
 use clap::builder::{styling::Styles, ValueParser};
-use clap::Parser;
 use clap::ValueHint;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use std::thread;
 
@@ -43,9 +43,22 @@ pub struct Args {
     #[clap(short = 'i', long, action = clap::ArgAction::Set, default_value_t = false)]
     pub case_insensitive: bool,
 
+    /// Filter matches by type. Also accepts 'f', 'd', and 'l'
+    #[clap(short = 't', long, value_enum, default_values_t = [FileType::Directory, FileType::File, FileType::Symlink])]
+    pub file_type: Vec<FileType>,
+
     /// Paths to check for large directories
     #[clap(required = true, value_parser, value_hint = ValueHint::AnyPath)]
     pub path: Vec<PathBuf>,
+}
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum FileType {
+    #[value(alias = "f")]
+    File,
+    #[value(alias = "d")]
+    Directory,
+    #[value(alias = "l")]
+    Symlink,
 }
 
 /// Parses a string into an unsigned integer representing the number of threads.
