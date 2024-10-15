@@ -47,10 +47,12 @@ fn main() -> Result<(), Error> {
 
     // build name GlobSet
     let glob_name = glob::build_glob_set(&args.name, args.case_insensitive)?;
+    let glob_enabled = args.name.is_some();
 
     // build regex RegexSet
     let regex_name =
         regex::build_regex_set(&args.regex, args.case_insensitive)?;
+    let regex_enabled = args.regex.is_some();
 
     // output/print channel
     let (tx, rx) = unbounded::<DirEntry>();
@@ -60,13 +62,13 @@ fn main() -> Result<(), Error> {
         let mut stdout = BufWriter::new(io::stdout());
 
         for ent in rx {
-            // glob filename matching
-            if !glob_name.is_empty() && !glob_name.is_match(ent.file_name()) {
+            // glob filename matching if --name option was provided
+            if glob_enabled && !glob_name.is_match(ent.file_name()) {
                 continue;
             }
 
-            // regex full path matching
-            if !regex_name.is_empty()
+            // regex full path matching if --regex option was provided
+            if regex_enabled
                 && !regex_name.is_match(regex::path_to_bytes(&ent.path()))
             {
                 continue;
