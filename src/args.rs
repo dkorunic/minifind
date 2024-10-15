@@ -24,12 +24,20 @@ pub struct Args {
     pub one_filesystem: bool,
 
     /// Number of threads to use when calibrating and scanning
-    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(1))]
+    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(2))]
     pub threads: usize,
 
     /// Maximum depth to traverse
     #[clap(short = 'd', long, value_parser)]
     pub max_depth: Option<usize>,
+
+    /// Base of the file name matching globbing pattern
+    #[clap(short = 'n', long, value_parser, conflicts_with = "regex")]
+    pub name: Option<Vec<String>>,
+
+    /// File name (full path) matching regular expression pattern
+    #[clap(short = 'r', long, value_parser, conflicts_with = "name")]
+    pub regex: Option<Vec<String>>,
 
     /// Paths to check for large directories
     #[clap(required = true, value_parser, value_hint = ValueHint::AnyPath)]

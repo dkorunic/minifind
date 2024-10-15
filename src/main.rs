@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::thread;
 
 mod args;
+mod glob;
 mod interrupt;
+mod regex;
 mod walk;
 
 cfg_if! {
@@ -43,6 +45,12 @@ fn main() -> Result<(), Error> {
     // build ignore walkers for all paths specified
     let walker = walk::build_walker(&args, &args.path);
 
+    // build name GlobSet
+    let glob_name = glob::build_glob_set(&args.name)?;
+
+    // build regex RegexSet
+    let regex_name = regex::build_regex_set(&args.regex)?;
+
     // output/print channel
     let (tx, rx) = unbounded::<DirEntry>();
 
@@ -51,6 +59,19 @@ fn main() -> Result<(), Error> {
         let mut stdout = BufWriter::new(io::stdout());
 
         for ent in rx {
+            // glob filename matching
+            if !glob_name.is_empty() && !glob_name.is_match(ent.file_name()) {
+                continue;
+            }
+
+            // regex full path matching
+            if !regex_name.is_empty()
+                && !regex_name.is_match(regex::path_to_bytes(&ent.path()))
+            {
+                continue;
+            }
+
+            // buffered output
             stdout.write_all(&Vec::from_path_lossy(ent.path())).unwrap_or(());
             if ent.path().is_dir() {
                 stdout.write_all(b"/").unwrap_or(());

@@ -266,8 +266,10 @@ dependencies = [
  "cfg-if",
  "clap",
  "crossbeam-channel",
+ "globset",
  "ignore",
  "libc",
+ "regex",
  "signal-hook",
  "tikv-jemallocator",
 ]
@@ -288,6 +290,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b9d34b8991d19d98081b46eacdd8eb58c6f2b201139f7c5f643cc155a633af"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "regex"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38200e5ee88914975b69f657f0801b6f6dccafd44fd9326302a4aaeecfacb1d8"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
