@@ -30,6 +30,14 @@ Options:
   -V, --version                            Print version
 ```
 
+### Regular expressions
+
+`--regex` option uses Rust [regex syntax](https://docs.rs/regex/latest/regex/#syntax) that is very similar to other engines but without support for look-around and backreferences.
+
+### Glob expressions
+
+`--name` option uses Unix-style [glob syntax](https://docs.rs/globset/latest/globset/#syntax).
+
 ## Minifind vs GNU find
 
 Hardware: 8-core Xeon E5-1630 with 4-drive SATA RAID-10
