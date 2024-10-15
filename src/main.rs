@@ -76,9 +76,6 @@ fn main() -> Result<(), Error> {
 
             // buffered output
             stdout.write_all(&Vec::from_path_lossy(ent.path())).unwrap_or(());
-            if ent.path().is_dir() {
-                stdout.write_all(b"/").unwrap_or(());
-            }
             stdout.write_all(b"\n").unwrap_or(());
         }
 
