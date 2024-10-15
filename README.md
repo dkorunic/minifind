@@ -7,15 +7,16 @@
 
 ## About
 
-`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and little else. Directories have trailing slash added. For filename or path matching, it is possible to use `--name` or `--regex` options, toggling case insensitivity with `--case-insensitive` or not.
+`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and little else. For filename or path matching, it is possible to use `--name` or `--regex` options, toggling case insensitivity with `--case-insensitive` or not.
 
 It will not follow filesystem symlinks and it will not cross filesystem boundaries by default. Number of threads used is set to the number of available CPU cores in the system.
 
 Let us also mention other notable projects dealing with this task one way or another:
 
-- [sharkdp/fd](https://github.com/sharkdp/fd) which is much more featured find alternative
-- [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) which also houses [globset](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) and [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) crates
-- Rust [findutils](https://github.com/uutils/findutils) reimplementation
+- [sharkdp/fd](https://github.com/sharkdp/fd) which is a much more featured find alternative but with excellent performance,
+- [LyonSyonII/hunt-rs](https://github.com/LyonSyonII/hunt-rs), a very similar high performance-oriented tool,
+- [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) which also houses [globset](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) and [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) crates that are used in this project,
+- Rust [findutils](https://github.com/uutils/findutils) reimplementation that can be used as drop-in replacement.
 
 ## Usage
 
