@@ -51,6 +51,7 @@ pub struct Args {
     #[clap(required = true, value_parser, value_hint = ValueHint::AnyPath)]
     pub path: Vec<PathBuf>,
 }
+
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
 pub enum FileType {
     #[value(alias = "f")]
