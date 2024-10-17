@@ -54,7 +54,8 @@ fn main() -> Result<(), Error> {
     let regex_enabled = args.regex.is_some();
 
     // output/print channel
-    let (tx, rx) = bounded::<DirEntry>(2 * args.threads);
+    // "magic number" for size determined by performance testing
+    let (tx, rx) = bounded::<DirEntry>(16 * (args.threads - 1));
 
     // output thread
     let print_thread = thread::spawn(move || {
