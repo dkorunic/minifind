@@ -27,7 +27,8 @@ pub fn build_walker(args: &Args, paths: &[PathBuf]) -> WalkParallel {
         builder.add(p);
     }
 
-    let walker = builder.threads(args.threads).build_parallel();
+    // reserve 1 thread for output
+    let walker = builder.threads(args.threads - 1).build_parallel();
 
     walker
 }
