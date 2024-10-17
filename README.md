@@ -29,8 +29,8 @@ Arguments:
   <PATH>...  Paths to check for large directories
 
 Options:
-  -f, --follow-symlinks <FOLLOW_SYMLINKS>    Follow symlinks [default: false] [possible values: true, false]
-  -o, --one-filesystem <ONE_FILESYSTEM>      Do not cross mount points [default: true] [possible values: true, false]
+  -f, --follow-symlinks <FOLLOW_SYMLINKS>    Follow symlinks [default: false] [short aliases: L] [possible values: true, false]
+  -o, --one-filesystem <ONE_FILESYSTEM>      Do not cross mount points [default: true] [aliases: xdev] [possible values: true, false]
   -x, --threads <THREADS>                    Number of threads to use when calibrating and scanning [default: 20]
   -d, --max-depth <MAX_DEPTH>                Maximum depth to traverse
   -n, --name <NAME>                          Base of the file name matching globbing pattern

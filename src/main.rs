@@ -2,7 +2,7 @@ use anyhow::Error;
 use bstr::ByteVec;
 use cfg_if::cfg_if;
 use clap::Parser;
-use crossbeam_channel::unbounded;
+use crossbeam_channel::bounded;
 use ignore::DirEntry;
 use ignore::WalkState;
 use std::io;
@@ -44,16 +44,17 @@ fn main() -> Result<(), Error> {
     interrupt::setup_interrupt_handler(shutdown)?;
 
     // build name GlobSet
-    let glob_name = glob::build_glob_set(&args.name, args.case_insensitive)?;
+    let glob_name =
+        glob::build_glob_set(args.name.as_ref(), args.case_insensitive)?;
     let glob_enabled = args.name.is_some();
 
     // build regex RegexSet
     let regex_name =
-        regex::build_regex_set(&args.regex, args.case_insensitive)?;
+        regex::build_regex_set(args.regex.as_ref(), args.case_insensitive)?;
     let regex_enabled = args.regex.is_some();
 
     // output/print channel
-    let (tx, rx) = unbounded::<DirEntry>();
+    let (tx, rx) = bounded::<DirEntry>(2 * args.threads);
 
     // output thread
     let print_thread = thread::spawn(move || {

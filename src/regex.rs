@@ -12,10 +12,10 @@ use std::path::Path;
 ///
 /// A Result containing the constructed `GlobSet` or an Error if the construction fails.
 pub fn build_regex_set(
-    patterns: &Option<Vec<String>>,
+    patterns: Option<&Vec<String>>,
     case_insensitive: bool,
 ) -> Result<RegexSet, Error> {
-    RegexSetBuilder::new(patterns.as_ref().unwrap_or(&Vec::new()))
+    RegexSetBuilder::new(patterns.map_or(&Vec::new(), |v| v))
         .case_insensitive(case_insensitive)
         .build()
         .context("Unable to build regular expression set")

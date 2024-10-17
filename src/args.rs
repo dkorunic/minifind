@@ -16,11 +16,11 @@ const STYLES: Styles = Styles::styled()
 #[clap(author, version, about, long_about = None, styles=STYLES)]
 pub struct Args {
     /// Follow symlinks
-    #[clap(short = 'f', long, action = clap::ArgAction::Set, default_value_t = false)]
+    #[clap(short = 'f', long, action = clap::ArgAction::Set, default_value_t = false, visible_short_alias = 'L')]
     pub follow_symlinks: bool,
 
     /// Do not cross mount points
-    #[clap(short = 'o', long, action = clap::ArgAction::Set, default_value_t = true)]
+    #[clap(short = 'o', long, action = clap::ArgAction::Set, default_value_t = true, visible_alias = "xdev")]
     pub one_filesystem: bool,
 
     /// Number of threads to use when calibrating and scanning

@@ -11,12 +11,12 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 ///
 /// A Result containing the constructed `GlobSet` or an Error if the construction fails.
 pub fn build_glob_set(
-    patterns: &Option<Vec<String>>,
+    patterns: Option<&Vec<String>>,
     case_insensitive: bool,
 ) -> Result<GlobSet, Error> {
     let mut builder = GlobSetBuilder::new();
 
-    for p in patterns.as_ref().unwrap_or(&Vec::new()) {
+    for p in patterns.map_or(&Vec::new(), |v| v) {
         builder.add(
             GlobBuilder::new(p).case_insensitive(case_insensitive).build()?,
         );
