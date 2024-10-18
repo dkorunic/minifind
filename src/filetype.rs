@@ -1,8 +1,10 @@
 use crate::args;
 use ignore::DirEntry;
 use std::fs;
+
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 pub struct FileType {
