@@ -43,7 +43,7 @@ pub struct Args {
     #[clap(short = 'i', long, action = clap::ArgAction::Set, default_value_t = false)]
     pub case_insensitive: bool,
 
-    /// Filter matches by type. Also accepts 'f', 'd', and 'l'
+    /// Filter matches by type. Also accepts 'b', 'c', 'd', 'p', 'f', 'l', 's' and 'e' aliases.
     #[clap(short = 't', long, value_enum, default_values_t = [FileType::Directory, FileType::File, FileType::Symlink])]
     pub file_type: Vec<FileType>,
 
@@ -54,12 +54,22 @@ pub struct Args {
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
 pub enum FileType {
-    #[value(alias = "f")]
-    File,
+    #[value(alias = "e")]
+    Empty,
+    #[value(alias = "b")]
+    BlockDevice,
+    #[value(alias = "c")]
+    CharDevice,
     #[value(alias = "d")]
     Directory,
+    #[value(alias = "p")]
+    Pipe,
+    #[value(alias = "f")]
+    File,
     #[value(alias = "l")]
     Symlink,
+    #[value(alias = "s")]
+    Socket,
 }
 
 /// Parses a string into an unsigned integer representing the number of threads.

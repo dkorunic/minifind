@@ -36,8 +36,8 @@ Options:
   -n, --name <NAME>                          Base of the file name matching globbing pattern
   -r, --regex <REGEX>                        File name (full path) matching regular expression pattern
   -i, --case-insensitive <CASE_INSENSITIVE>  Case-insensitive matching for globbing and regular expression patterns [default: false] [possible values: true, false]
-  -t, --file-type <FILE_TYPE>                Filter matches by type. Also accepts 'f', 'd', and 'l' [default: directory file symlink] [possible values: file,
-                                             directory, symlink]
+  -t, --file-type <FILE_TYPE>                Filter matches by type. Also accepts 'b', 'c', 'd', 'p', 'f', 'l', 's' and 'e' aliases [default: directory file symlink]
+                                             [possible values: empty, block-device, char-device, directory, pipe, file, symlink, socket]
   -h, --help                                 Print help
   -V, --version                              Print version
 ```
