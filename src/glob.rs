@@ -18,7 +18,10 @@ pub fn build_glob_set(
 
     for p in patterns.map_or(&Vec::new(), |v| v) {
         builder.add(
-            GlobBuilder::new(p).case_insensitive(case_insensitive).build()?,
+            GlobBuilder::new(p)
+                .case_insensitive(case_insensitive)
+                .build()
+                .context("Unable to parse and build glob pattern")?,
         );
     }
 

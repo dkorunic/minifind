@@ -18,7 +18,7 @@ pub fn build_regex_set(
     RegexSetBuilder::new(patterns.map_or(&Vec::new(), |v| v))
         .case_insensitive(case_insensitive)
         .build()
-        .context("Unable to build regular expression set")
+        .context("Unable to parse and build regular expression set")
 }
 
 /// Converts the given path to a string slice, returning an empty string if conversion fails.
