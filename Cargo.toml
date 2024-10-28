@@ -11,8 +11,8 @@ exclude = [".gitignore"]
 edition = "2021"
 
 [dependencies]
-anstyle = "1.0.8"
-anyhow = "1.0.90"
+anstyle = "1.0.9"
+anyhow = "1.0.91"
 clap = { version = "4.5.20", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.23"
 signal-hook = "0.3.17"
@@ -21,7 +21,7 @@ bstr = "1.10.0"
 cfg-if = "1.0.0"
 libc = "0.2.161"
 globset = "0.4.15"
-regex = "1.11.0"
+regex = "1.11.1"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.6.0"
