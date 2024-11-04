@@ -11,8 +11,8 @@ exclude = [".gitignore"]
 edition = "2021"
 
 [dependencies]
-anstyle = "1.0.9"
-anyhow = "1.0.91"
+anstyle = "1.0.10"
+anyhow = "1.0.92"
 clap = { version = "4.5.20", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.23"
 signal-hook = "0.3.17"
