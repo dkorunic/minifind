@@ -12,14 +12,14 @@ edition = "2021"
 
 [dependencies]
 anstyle = "1.0.10"
-anyhow = "1.0.92"
+anyhow = "1.0.93"
 clap = { version = "4.5.20", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.23"
 signal-hook = "0.3.17"
 crossbeam-channel = "0.5.13"
 bstr = "1.10.0"
 cfg-if = "1.0.0"
-libc = "0.2.161"
+libc = "0.2.162"
 globset = "0.4.15"
 regex = "1.11.1"
 
