@@ -5,8 +5,10 @@ use clap::Parser;
 use crossbeam_channel::bounded;
 use ignore::DirEntry;
 use ignore::WalkState;
+use itertools::Itertools;
 use std::io;
 use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -85,8 +87,12 @@ fn main() -> Result<(), Error> {
         stdout.flush().unwrap_or(());
     });
 
+    // deduplicate paths
+    let unique_paths =
+        &args.path.clone().into_iter().unique().collect::<Vec<PathBuf>>();
+
     // build ignore walkers for all paths specified
-    let walker = walk::build_walker(&args, &args.path);
+    let walker = walk::build_walker(&args, unique_paths);
 
     // walker threads
     walker.run(|| {
