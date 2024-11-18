@@ -7,7 +7,7 @@
 
 ## About
 
-`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and little else. For filename or path matching, it is possible to use `--name` or `--regex` options, toggling case insensitivity with `--case-insensitive` or not. Additionally to narrow down matches, it is possible to use `--file-type` option and filter by file type (`f` for files, `d` for directories and `l` for symlinks).
+`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and little else. For filename or path matching, it is possible to use `--name` or `--regex` options, toggling case insensitivity with `--case-insensitive` or not. Additionally to narrow down matches, it is possible to use `--file-type` option and filter by file type (`b` for block device, `c` for character device, `d` for directory, `p` for named FIFO, `f` for file, `l` for symlink, `s` for socket or `e` for empty file/directory).
 
 It will not follow filesystem symlinks and it will not cross filesystem boundaries by default. Number of threads used is set to the number of available CPU cores in the system.
 
