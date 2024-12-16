@@ -10,16 +10,22 @@ license = "MIT"
 exclude = [".gitignore"]
 edition = "2021"
 
+[package.metadata.wix]
+upgrade-guid = "EBD8E920-75F5-4C5B-9829-180971E88F3C"
+path-guid = "6D1E177C-8B8D-4043-9C5C-D4001C57A524"
+license = false
+eula = false
+
 [dependencies]
 anstyle = "1.0.10"
-anyhow = "1.0.93"
-clap = { version = "4.5.21", features = ["wrap_help", "unicode", "derive"] }
+anyhow = "1.0.94"
+clap = { version = "4.5.23", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.23"
 signal-hook = "0.3.17"
-crossbeam-channel = "0.5.13"
-bstr = "1.11.0"
+crossbeam-channel = "0.5.14"
+bstr = "1.11.1"
 cfg-if = "1.0.0"
-libc = "0.2.164"
+libc = "0.2.168"
 globset = "0.4.15"
 regex = "1.11.1"
 normpath = "1.3.0"
@@ -43,3 +49,8 @@ overflow-checks = true
 lto = "fat"
 panic = "abort"
 codegen-units = 1
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
