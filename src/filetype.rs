@@ -85,7 +85,7 @@ impl FileType {
         entry_type.is_block_device()
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     pub fn is_block_device(entry_type: fs::FileType) -> bool {
         false
     }
@@ -96,7 +96,7 @@ impl FileType {
         entry_type.is_char_device()
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     pub fn is_char_device(_: fs::FileType) -> bool {
         false
     }
@@ -107,7 +107,7 @@ impl FileType {
         entry_type.is_fifo()
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     pub fn is_pipe(_: fs::FileType) -> bool {
         false
     }
@@ -118,7 +118,7 @@ impl FileType {
         entry_type.is_socket()
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     pub fn is_socket(_: fs::FileType) -> bool {
         false
     }

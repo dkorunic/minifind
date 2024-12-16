@@ -4,6 +4,7 @@ use signal_hook::flag::register;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+#[cfg(unix)]
 const STOP_SIGNALS: &[i32] = &[
     signal::SIGINT,
     signal::SIGTERM,
@@ -13,6 +14,9 @@ const STOP_SIGNALS: &[i32] = &[
     signal::SIGUSR1,
     signal::SIGUSR2,
 ];
+
+#[cfg(not(unix))]
+const STOP_SIGNALS: &[i32] = &[signal::SIGTERM, signal::SIGINT];
 
 /// Sets up interrupt handlers for termination signals and registers signal handlers for graceful shutdown.
 ///
