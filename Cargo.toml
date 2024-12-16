@@ -5,6 +5,7 @@ authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "minimal find reimplementation"
 repository = "https://github.com/dkorunic/minifind"
+homepage = "https://github.com/dkorunic/minifind"
 readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
@@ -53,4 +54,4 @@ codegen-units = 1
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
-lto = "thin"
+lto = "fat"
