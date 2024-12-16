@@ -86,7 +86,7 @@ impl FileType {
     }
 
     #[cfg(not(unix))]
-    pub fn is_block_device(entry_type: fs::FileType) -> bool {
+    pub fn is_block_device(_: fs::FileType) -> bool {
         false
     }
 
