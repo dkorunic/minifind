@@ -9,7 +9,7 @@ homepage = "https://github.com/dkorunic/minifind"
 readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
-edition = "2021"
+edition = "2024"
 
 [package.metadata.wix]
 upgrade-guid = "EBD8E920-75F5-4C5B-9829-180971E88F3C"
@@ -19,8 +19,8 @@ eula = false
 
 [dependencies]
 anstyle = "1.0.10"
-anyhow = "1.0.95"
-clap = { version = "4.5.28", features = ["wrap_help", "unicode", "derive"] }
+anyhow = "1.0.96"
+clap = { version = "4.5.30", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.23"
 signal-hook = "0.3.17"
 crossbeam-channel = "0.5.14"
