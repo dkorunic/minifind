@@ -2,7 +2,6 @@
 
 [![GitHub license](https://img.shields.io/github/license/dkorunic/minifind.svg)](https://github.com/dkorunic/minifind/blob/master/LICENSE.txt)
 [![GitHub release](https://img.shields.io/github/release/dkorunic/minifind.svg)](https://github.com/dkorunic/minifind/releases/latest)
-[![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/dkorunic/minifind)](https://rust-reportcard.xuri.me/report/github.com/dkorunic/minifind)
 [![release](https://github.com/dkorunic/minifind/actions/workflows/release.yml/badge.svg)](https://github.com/dkorunic/minifind/actions/workflows/release.yml)
 
 ## About
