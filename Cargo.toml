@@ -1,6 +1,6 @@
 [package]
 name = "minifind"
-version = "0.5.3"
+version = "0.6.0"
 authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "minimal find reimplementation"
@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [package.metadata.wix]
 upgrade-guid = "EBD8E920-75F5-4C5B-9829-180971E88F3C"
@@ -19,28 +19,19 @@ license = false
 eula = false
 
 [dependencies]
+mimalloc = "0.1.47"
 anstyle = "1.0.11"
 anyhow = "1.0.98"
-clap = { version = "4.5.40", features = ["wrap_help", "unicode", "derive"] }
+clap = { version = "4.5.41", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.23"
 signal-hook = "0.3.18"
 crossbeam-channel = "0.5.15"
 bstr = "1.12.0"
-cfg-if = "1.0.1"
 libc = "0.2.174"
 globset = "0.4.16"
 regex = "1.11.1"
 normpath = "1.3.0"
 itertools = "0.14.0"
-
-[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-tikv-jemallocator = "0.6.0"
-
-[target.'cfg(all(target_os = "linux", target_arch = "aarch64"))'.dependencies]
-tikv-jemallocator = "0.6.0"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-tikv-jemallocator = "0.6.0"
 
 [profile.release]
 opt-level = 3

@@ -1,6 +1,5 @@
 use anyhow::Error;
 use bstr::ByteVec;
-use cfg_if::cfg_if;
 use clap::Parser;
 use crossbeam_channel::bounded;
 use ignore::DirEntry;
@@ -9,8 +8,8 @@ use itertools::Itertools;
 use std::io;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 mod args;
@@ -20,15 +19,10 @@ mod interrupt;
 mod regex;
 mod walk;
 
-cfg_if! {
-    if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
-        use_jemalloc!();
-    } else if #[cfg(all(target_os = "linux", target_arch = "aarch64"))] {
-        use_jemalloc!();
-    } else if #[cfg(target_os = "macos")] {
-        use_jemalloc!();
-    }
-}
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 /// Executes the main program logic, including setting up an interrupt handler, building a walker, and managing threads for output and walking directories.
 ///
@@ -129,14 +123,4 @@ fn main() -> Result<(), Error> {
     print_thread.join().unwrap();
 
     Ok(())
-}
-
-#[macro_export]
-macro_rules! use_jemalloc {
-    () => {
-        use tikv_jemallocator::Jemalloc;
-
-        #[global_allocator]
-        static GLOBAL: Jemalloc = Jemalloc;
-    };
 }
