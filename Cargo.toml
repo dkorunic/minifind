@@ -22,7 +22,7 @@ eula = false
 mimalloc = "0.1.47"
 anstyle = "1.0.11"
 anyhow = "1.0.98"
-clap = { version = "4.5.41", features = ["wrap_help", "unicode", "derive"] }
+clap = { version = "4.5.43", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.23"
 signal-hook = "0.3.18"
 crossbeam-channel = "0.5.15"
