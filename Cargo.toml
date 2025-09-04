@@ -1,6 +1,6 @@
 [package]
 name = "minifind"
-version = "0.6.0"
+version = "0.6.1"
 authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "minimal find reimplementation"
@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [package.metadata.wix]
 upgrade-guid = "EBD8E920-75F5-4C5B-9829-180971E88F3C"
