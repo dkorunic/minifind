@@ -1,6 +1,6 @@
 [package]
 name = "minifind"
-version = "0.6.4"
+version = "0.7.0"
 authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "minimal find reimplementation"

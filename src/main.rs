@@ -63,6 +63,19 @@ fn main() -> Result<(), Error> {
             BufWriter::with_capacity(256 * 1024, io::stdout().lock());
 
         for dir_entry in rx {
+            // glob filename matching if --name option was provided
+            if glob_enabled && !glob_name.is_match(dir_entry.file_name()) {
+                continue;
+            }
+
+            // regex full path matching if --regex option was provided
+            if regex_enabled
+                && !regex_name
+                    .is_match(regex::path_to_bytes(&dir_entry.path()))
+            {
+                continue;
+            }
+
             // buffered output
             #[cfg(unix)]
             {
@@ -70,7 +83,6 @@ fn main() -> Result<(), Error> {
                     .write_all(dir_entry.path().as_os_str().as_bytes())
                     .unwrap_or(());
             }
-
             #[cfg(not(unix))]
             {
                 stdout
@@ -96,26 +108,11 @@ fn main() -> Result<(), Error> {
     walker.run(|| {
         let tx = tx.clone();
         let filetype = filetype_proto;
-        let glob_name = glob_name.clone();
-        let regex_name = regex_name.clone();
 
         Box::new(move |dir_entry| {
             if let Ok(dir_entry) = dir_entry {
                 // check if filetype should be ignored
                 if filetype.ignore_filetype(&dir_entry) {
-                    return WalkState::Continue;
-                }
-
-                // glob filename matching if --name option was provided
-                if glob_enabled && !glob_name.is_match(dir_entry.file_name()) {
-                    return WalkState::Continue;
-                }
-
-                // regex full path matching if --regex option was provided
-                if regex_enabled
-                    && !regex_name
-                        .is_match(regex::path_to_bytes(&dir_entry.path()))
-                {
                     return WalkState::Continue;
                 }
 

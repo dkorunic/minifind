@@ -64,40 +64,17 @@ impl FileType {
     #[inline]
     pub fn ignore_filetype(self, dir_entry: &DirEntry) -> bool {
         if let Some(ref entry_type) = dir_entry.file_type() {
-            if entry_type.is_file() {
-                if !self.file {
-                    return true;
-                }
-            } else if entry_type.is_dir() {
-                if !self.directory {
-                    return true;
-                }
-            } else if entry_type.is_symlink() {
-                if !self.symlink {
-                    return true;
-                }
-            } else if Self::is_block_device(*entry_type) {
-                if !self.block_device {
-                    return true;
-                }
-            } else if Self::is_char_device(*entry_type) {
-                if !self.char_device {
-                    return true;
-                }
-            } else if Self::is_pipe(*entry_type) {
-                if !self.pipe {
-                    return true;
-                }
-            } else if Self::is_socket(*entry_type) && !self.socket {
-                return true;
-            }
-
-            // exclusive search; requires additional lookups
-            if self.empty && !Self::is_empty(dir_entry, *entry_type) {
-                return true;
-            }
-
-            false
+            // works everywhere
+            (!self.file && entry_type.is_file())
+                || (!self.directory && entry_type.is_dir())
+                || (!self.symlink && entry_type.is_symlink())
+                // requires Unix-only std::os::unix::fs::FileTypeExt trait
+                || (!self.block_device && Self::is_block_device(*entry_type))
+                || (!self.char_device && Self::is_char_device(*entry_type))
+                || (!self.pipe && Self::is_pipe(*entry_type))
+                || (!self.socket && Self::is_socket(*entry_type))
+                // exclusive search; requires additional lookups
+                || (self.empty && !Self::is_empty(dir_entry, *entry_type))
         } else {
             true
         }
