@@ -1,4 +1,5 @@
 use anyhow::Error;
+#[cfg(not(unix))]
 use bstr::ByteVec;
 use clap::Parser;
 use crossbeam_channel::bounded;
@@ -57,24 +58,23 @@ fn main() -> Result<(), Error> {
     let print_thread = thread::spawn(move || {
         let mut stdout = BufWriter::new(io::stdout().lock());
 
+        #[cfg(unix)]
+        use std::os::unix::ffi::OsStrExt;
+
         for dir_entry in rx {
-            // glob filename matching if --name option was provided
-            if glob_enabled && !glob_name.is_match(dir_entry.file_name()) {
-                continue;
-            }
-
-            // regex full path matching if --regex option was provided
-            if regex_enabled
-                && !regex_name
-                    .is_match(regex::path_to_bytes(&dir_entry.path()))
-            {
-                continue;
-            }
-
             // buffered output
-            stdout
-                .write_all(&Vec::from_path_lossy(dir_entry.path()))
-                .unwrap_or(());
+            #[cfg(unix)]
+            {
+                stdout
+                    .write_all(dir_entry.path().as_os_str().as_bytes())
+                    .unwrap_or(());
+            }
+            #[cfg(not(unix))]
+            {
+                stdout
+                    .write_all(&Vec::from_path_lossy(dir_entry.path()))
+                    .unwrap_or(());
+            }
             stdout.write_all(b"\n").unwrap_or(());
         }
 
@@ -83,20 +83,37 @@ fn main() -> Result<(), Error> {
 
     // deduplicate paths
     let unique_paths =
-        &args.path.clone().into_iter().unique().collect::<Vec<PathBuf>>();
+        &args.path.iter().unique().cloned().collect::<Vec<PathBuf>>();
 
     // build ignore walkers for all paths specified
     let walker = walk::build_walker(&args, unique_paths);
 
     // walker threads
+    let filetype_proto = filetype::FileType::new(&args.file_type);
+
     walker.run(|| {
         let tx = tx.clone();
-        let filetype = filetype::FileType::new(&args.file_type);
+        let filetype = filetype_proto;
+        let glob_name = glob_name.clone();
+        let regex_name = regex_name.clone();
 
         Box::new(move |dir_entry| {
             if let Ok(dir_entry) = dir_entry {
                 // check if filetype should be ignored
                 if filetype.ignore_filetype(&dir_entry) {
+                    return WalkState::Continue;
+                }
+
+                // glob filename matching if --name option was provided
+                if glob_enabled && !glob_name.is_match(dir_entry.file_name()) {
+                    return WalkState::Continue;
+                }
+
+                // regex full path matching if --regex option was provided
+                if regex_enabled
+                    && !regex_name
+                        .is_match(regex::path_to_bytes(&dir_entry.path()))
+                {
                     return WalkState::Continue;
                 }
 

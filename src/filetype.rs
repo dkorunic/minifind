@@ -6,7 +6,7 @@ use std::fs;
 use std::os::unix::fs::FileTypeExt;
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct FileType {
     pub empty: bool,
     pub block_device: bool,
