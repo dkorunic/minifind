@@ -61,19 +61,43 @@ impl FileType {
     /// # Returns
     ///
     /// * `bool` - `true` if the file type should be ignored, `false` otherwise.
+    #[inline]
     pub fn ignore_filetype(self, dir_entry: &DirEntry) -> bool {
         if let Some(ref entry_type) = dir_entry.file_type() {
-            // works everywhere
-            (!self.file && entry_type.is_file())
-                || (!self.directory && entry_type.is_dir())
-                || (!self.symlink && entry_type.is_symlink())
-                // requires Unix-only std::os::unix::fs::FileTypeExt trait
-                || (!self.block_device && Self::is_block_device(*entry_type))
-                || (!self.char_device && Self::is_char_device(*entry_type))
-                || (!self.pipe && Self::is_pipe(*entry_type))
-                || (!self.socket && Self::is_socket(*entry_type))
-                // exclusive search; requires additional lookups
-                || (self.empty && !Self::is_empty(dir_entry, *entry_type))
+            if entry_type.is_file() {
+                if !self.file {
+                    return true;
+                }
+            } else if entry_type.is_dir() {
+                if !self.directory {
+                    return true;
+                }
+            } else if entry_type.is_symlink() {
+                if !self.symlink {
+                    return true;
+                }
+            } else if Self::is_block_device(*entry_type) {
+                if !self.block_device {
+                    return true;
+                }
+            } else if Self::is_char_device(*entry_type) {
+                if !self.char_device {
+                    return true;
+                }
+            } else if Self::is_pipe(*entry_type) {
+                if !self.pipe {
+                    return true;
+                }
+            } else if Self::is_socket(*entry_type) && !self.socket {
+                return true;
+            }
+
+            // exclusive search; requires additional lookups
+            if self.empty && !Self::is_empty(dir_entry, *entry_type) {
+                return true;
+            }
+
+            false
         } else {
             true
         }
@@ -81,44 +105,52 @@ impl FileType {
 
     /// Checks if the given file type represents a block device.
     #[cfg(unix)]
+    #[inline]
     pub fn is_block_device(entry_type: fs::FileType) -> bool {
         entry_type.is_block_device()
     }
 
     #[cfg(not(unix))]
+    #[inline]
     pub fn is_block_device(_: fs::FileType) -> bool {
         false
     }
 
     /// Checks if the given file type represents a character device.
     #[cfg(unix)]
+    #[inline]
     pub fn is_char_device(entry_type: fs::FileType) -> bool {
         entry_type.is_char_device()
     }
 
     #[cfg(not(unix))]
+    #[inline]
     pub fn is_char_device(_: fs::FileType) -> bool {
         false
     }
 
     /// Checks if the given file type represents a named FIFO
     #[cfg(unix)]
+    #[inline]
     pub fn is_pipe(entry_type: fs::FileType) -> bool {
         entry_type.is_fifo()
     }
 
     #[cfg(not(unix))]
+    #[inline]
     pub fn is_pipe(_: fs::FileType) -> bool {
         false
     }
 
     /// Checks if the given file type represents a socket
     #[cfg(unix)]
+    #[inline]
     pub fn is_socket(entry_type: fs::FileType) -> bool {
         entry_type.is_socket()
     }
 
     #[cfg(not(unix))]
+    #[inline]
     pub fn is_socket(_: fs::FileType) -> bool {
         false
     }
@@ -134,6 +166,7 @@ impl FileType {
     ///
     /// # Returns
     /// A boolean value indicating whether the directory entry is empty.
+    #[inline]
     pub fn is_empty(dir_entry: &DirEntry, entry_type: fs::FileType) -> bool {
         if entry_type.is_dir() {
             dir_entry.path().read_dir().is_ok_and(|mut r| r.next().is_none())

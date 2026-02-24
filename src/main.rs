@@ -58,7 +58,9 @@ fn main() -> Result<(), Error> {
 
     // output thread
     let print_thread = thread::spawn(move || {
-        let mut stdout = BufWriter::new(io::stdout().lock());
+        // use larger capacity buffer for less flush/write cycles
+        let mut stdout =
+            BufWriter::with_capacity(256 * 1024, io::stdout().lock());
 
         for dir_entry in rx {
             // buffered output
