@@ -61,7 +61,7 @@ impl FileType {
     /// # Returns
     ///
     /// * `bool` - `true` if the file type should be ignored, `false` otherwise.
-    pub fn ignore_filetype(&self, dir_entry: &DirEntry) -> bool {
+    pub fn ignore_filetype(self, dir_entry: &DirEntry) -> bool {
         if let Some(ref entry_type) = dir_entry.file_type() {
             // works everywhere
             (!self.file && entry_type.is_file())
@@ -136,13 +136,9 @@ impl FileType {
     /// A boolean value indicating whether the directory entry is empty.
     pub fn is_empty(dir_entry: &DirEntry, entry_type: fs::FileType) -> bool {
         if entry_type.is_dir() {
-            dir_entry
-                .path()
-                .read_dir()
-                .map(|mut r| r.next().is_none())
-                .unwrap_or(false)
+            dir_entry.path().read_dir().is_ok_and(|mut r| r.next().is_none())
         } else {
-            dir_entry.metadata().map(|m| m.len() == 0).unwrap_or(false)
+            dir_entry.metadata().is_ok_and(|m| m.len() == 0)
         }
     }
 }

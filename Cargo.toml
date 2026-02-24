@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
 edition = "2021"
-rust-version = "1.78.0"
+rust-version = "1.85.1"
 
 [package.metadata.wix]
 upgrade-guid = "EBD8E920-75F5-4C5B-9829-180971E88F3C"

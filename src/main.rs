@@ -8,6 +8,8 @@ use ignore::WalkState;
 use itertools::Itertools;
 use std::io;
 use std::io::{BufWriter, Write};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,9 +60,6 @@ fn main() -> Result<(), Error> {
     let print_thread = thread::spawn(move || {
         let mut stdout = BufWriter::new(io::stdout().lock());
 
-        #[cfg(unix)]
-        use std::os::unix::ffi::OsStrExt;
-
         for dir_entry in rx {
             // buffered output
             #[cfg(unix)]
@@ -69,6 +68,7 @@ fn main() -> Result<(), Error> {
                     .write_all(dir_entry.path().as_os_str().as_bytes())
                     .unwrap_or(());
             }
+
             #[cfg(not(unix))]
             {
                 stdout
