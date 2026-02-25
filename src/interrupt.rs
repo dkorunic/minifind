@@ -1,8 +1,8 @@
 use anyhow::{Context, Error};
 use signal_hook::consts::signal;
 use signal_hook::flag::register;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[cfg(unix)]
 const STOP_SIGNALS: &[i32] = &[

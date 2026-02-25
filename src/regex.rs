@@ -27,12 +27,12 @@ pub fn build_regex_set(
 /// Converts the given path to a byte slice.
 #[cfg(unix)]
 #[inline]
-pub fn path_to_bytes<P: AsRef<Path>>(path: &P) -> &[u8] {
+pub fn path_to_bytes<P: AsRef<Path> + ?Sized>(path: &P) -> &[u8] {
     path.as_ref().as_os_str().as_bytes()
 }
 
 #[cfg(not(unix))]
 #[inline]
-pub fn path_to_bytes<P: AsRef<Path>>(path: &P) -> &[u8] {
+pub fn path_to_bytes<P: AsRef<Path> + ?Sized>(path: &P) -> &[u8] {
     path.as_ref().as_os_str().to_str().unwrap_or("").as_bytes()
 }

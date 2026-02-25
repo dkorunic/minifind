@@ -1,6 +1,4 @@
 use anyhow::Error;
-#[cfg(not(unix))]
-use bstr::ByteVec;
 use clap::Parser;
 use crossbeam_channel::bounded;
 use ignore::DirEntry;
@@ -11,8 +9,8 @@ use std::io::{BufWriter, Write};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 mod args;
@@ -61,6 +59,8 @@ fn main() -> Result<(), Error> {
         // use larger capacity buffer for less flush/write cycles
         let mut stdout =
             BufWriter::with_capacity(256 * 1024, io::stdout().lock());
+        // reusable scratch buffer: one write_all per entry, no per-entry alloc
+        let mut line_buf: Vec<u8> = Vec::with_capacity(4096);
 
         for dir_entry in rx {
             // glob filename matching if --name option was provided
@@ -70,26 +70,22 @@ fn main() -> Result<(), Error> {
 
             // regex full path matching if --regex option was provided
             if regex_enabled
-                && !regex_name
-                    .is_match(regex::path_to_bytes(&dir_entry.path()))
+                && !regex_name.is_match(regex::path_to_bytes(dir_entry.path()))
             {
                 continue;
             }
 
-            // buffered output
+            // buffered output: path + newline in a single write_all
+            line_buf.clear();
             #[cfg(unix)]
-            {
-                stdout
-                    .write_all(dir_entry.path().as_os_str().as_bytes())
-                    .unwrap_or(());
-            }
+            line_buf
+                .extend_from_slice(dir_entry.path().as_os_str().as_bytes());
             #[cfg(not(unix))]
-            {
-                stdout
-                    .write_all(&Vec::from_path_lossy(dir_entry.path()))
-                    .unwrap_or(());
-            }
-            stdout.write_all(b"\n").unwrap_or(());
+            line_buf.extend_from_slice(
+                dir_entry.path().to_string_lossy().as_bytes(),
+            );
+            line_buf.push(b'\n');
+            stdout.write_all(&line_buf).unwrap_or(());
         }
 
         stdout.flush().unwrap_or(());
