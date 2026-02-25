@@ -6,30 +6,46 @@
 
 ## About
 
-`minifind` is a barebones Un\*x `find` tool implementation in Rust, meant just to list directory entries as fast as possible and little else. For filename or path matching, it is possible to use `--name` or `--regex` options, toggling case insensitivity with `--case-insensitive` or not. Additionally to narrow down matches, it is possible to use `--file-type` option and filter by file type (`b` for block device, `c` for character device, `d` for directory, `p` for named FIFO, `f` for file, `l` for symlink, `s` for socket or `e` for empty file/directory).
+`minifind` is a minimal Unix `find` reimplementation in Rust, designed to list
+directory entries as fast as possible. Filename or path matching is supported
+via `--name` (glob) or `--regex` (regular expression) options, with optional
+case-insensitive matching controlled by `--case-insensitive`. Results can be
+narrowed further using `--file-type` to filter by entry type: `b` for block
+device, `c` for character device, `d` for directory, `p` for named FIFO, `f`
+for regular file, `l` for symlink, `s` for socket, or `e` for empty
+file/directory. Both `--name` and `--regex` accept multiple patterns.
 
-It will not follow filesystem symlinks and it will not cross filesystem boundaries by default. Number of threads used is set to the number of available CPU cores in the system.
+By default, symlinks are not followed and filesystem boundaries are not
+crossed. The thread count defaults to the number of available CPU cores.
 
 ## Related projects
 
-Let us also mention other notable projects dealing with this task:
+Other notable projects in this space:
 
-- [sharkdp/fd](https://github.com/sharkdp/fd) which is a much more featured find alternative but with excellent performance,
-- [LyonSyonII/hunt-rs](https://github.com/LyonSyonII/hunt-rs), a very similar high performance-oriented tool,
-- [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) which also houses [globset](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset) and [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore) crates that are used in this project,
-- Rust [findutils](https://github.com/uutils/findutils) reimplementation that can be used as drop-in replacement.
+- [sharkdp/fd](https://github.com/sharkdp/fd) — a much more fully-featured
+  `find` alternative with excellent performance
+- [LyonSyonII/hunt-rs](https://github.com/LyonSyonII/hunt-rs) — a similar
+  high-performance-oriented tool
+- [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) — also home to
+  the [globset](https://github.com/BurntSushi/ripgrep/tree/master/crates/globset)
+  and [ignore](https://github.com/BurntSushi/ripgrep/tree/master/crates/ignore)
+  crates used by this project
+- [uutils/findutils](https://github.com/uutils/findutils) — a Rust
+  reimplementation of findutils intended as a drop-in replacement
 
 ## Usage
 
 ```shell
+minimal find reimplementation
+
 Usage: minifind [OPTIONS] <PATH>...
 
 Arguments:
   <PATH>...  Paths to check for large directories
 
 Options:
-  -f, --follow-symlinks <FOLLOW_SYMLINKS>    Follow symlinks [default: false] [short aliases: L] [possible values: true, false]
-  -o, --one-filesystem <ONE_FILESYSTEM>      Do not cross mount points [default: true] [aliases: xdev] [possible values: true, false]
+  -f, --follow-symlinks <FOLLOW_SYMLINKS>    Follow symlinks [default: false] [aliases: -L] [possible values: true, false]
+  -o, --one-filesystem <ONE_FILESYSTEM>      Do not cross mount points [default: true] [aliases: --xdev] [possible values: true, false]
   -x, --threads <THREADS>                    Number of threads to use when calibrating and scanning [default: 20]
   -d, --max-depth <MAX_DEPTH>                Maximum depth to traverse
   -n, --name <NAME>                          Base of the file name matching globbing pattern
@@ -43,15 +59,17 @@ Options:
 
 ### Regular expressions
 
-`--regex` option uses Rust [regex syntax](https://docs.rs/regex/latest/regex/#syntax) that is very similar to other engines but without support for look-around and backreferences.
+The `--regex` option uses Rust [regex syntax](https://docs.rs/regex/latest/regex/#syntax),
+which is similar to other engines but does not support look-around or
+backreferences.
 
 ### Glob expressions
 
-`--name` option uses Unix-style [glob syntax](https://docs.rs/globset/latest/globset/#syntax).
+The `--name` option uses Unix-style [glob syntax](https://docs.rs/globset/latest/globset/#syntax).
 
-## Minifind vs GNU find
+## minifind vs GNU find
 
-Hardware: 8-core Xeon E5-1630 with 4-drive SATA RAID-10
+Hardware: 8-core Xeon E5-1630 with a 4-drive SATA RAID-10 array
 
 Benchmark setup:
 
