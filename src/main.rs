@@ -32,13 +32,13 @@ static GLOBAL: MiMalloc = MiMalloc;
 /// * `Result<(), Error>` - An `Ok` variant upon successful execution, or an `Err` variant if an error occurs during program execution.
 fn main() -> Result<(), Error> {
     let args = args::Args::parse();
-    let shutdown = &Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicBool::new(false));
 
     // reset SIGPIPE signal handling
     interrupt::reset_sigpipe();
 
     // interrupt handler
-    interrupt::setup_interrupt_handler(shutdown)?;
+    interrupt::setup_interrupt_handler(&shutdown)?;
 
     // build name GlobSet
     let glob_name =
@@ -70,7 +70,7 @@ fn main() -> Result<(), Error> {
 
             // regex full path matching if --regex option was provided
             if regex_enabled
-                && !regex_name.is_match(regex::path_to_bytes(dir_entry.path()))
+                && !regex_name.is_match(&regex::path_to_bytes(dir_entry.path()))
             {
                 continue;
             }
@@ -93,10 +93,10 @@ fn main() -> Result<(), Error> {
 
     // deduplicate paths
     let unique_paths =
-        &args.path.iter().unique().cloned().collect::<Vec<PathBuf>>();
+        args.path.iter().unique().cloned().collect::<Vec<PathBuf>>();
 
     // build ignore walkers for all paths specified
-    let walker = walk::build_walker(&args, unique_paths);
+    let walker = walk::build_walker(&args, &unique_paths);
 
     // walker threads
     let filetype_proto = filetype::FileType::new(&args.file_type);
@@ -104,6 +104,7 @@ fn main() -> Result<(), Error> {
     walker.run(|| {
         let tx = tx.clone();
         let filetype = filetype_proto;
+        let shutdown = Arc::clone(&shutdown);
 
         Box::new(move |dir_entry| {
             if let Ok(dir_entry) = dir_entry {

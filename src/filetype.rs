@@ -28,7 +28,7 @@ impl FileType {
     /// # Returns
     ///
     /// * `Self` - A new instance of `FileType` with flags set based on the input Vec.
-    pub fn new(clap_filetype: &Vec<args::FileType>) -> Self {
+    pub fn new(clap_filetype: &[args::FileType]) -> Self {
         let mut filetype = Self::default();
 
         for v in clap_filetype {
@@ -63,18 +63,18 @@ impl FileType {
     /// * `bool` - `true` if the file type should be ignored, `false` otherwise.
     #[inline]
     pub fn ignore_filetype(self, dir_entry: &DirEntry) -> bool {
-        if let Some(ref entry_type) = dir_entry.file_type() {
+        if let Some(entry_type) = dir_entry.file_type() {
             // works everywhere
             (!self.file && entry_type.is_file())
                 || (!self.directory && entry_type.is_dir())
                 || (!self.symlink && entry_type.is_symlink())
                 // requires Unix-only std::os::unix::fs::FileTypeExt trait
-                || (!self.block_device && Self::is_block_device(*entry_type))
-                || (!self.char_device && Self::is_char_device(*entry_type))
-                || (!self.pipe && Self::is_pipe(*entry_type))
-                || (!self.socket && Self::is_socket(*entry_type))
+                || (!self.block_device && Self::is_block_device(entry_type))
+                || (!self.char_device && Self::is_char_device(entry_type))
+                || (!self.pipe && Self::is_pipe(entry_type))
+                || (!self.socket && Self::is_socket(entry_type))
                 // exclusive search; requires additional lookups
-                || (self.empty && !Self::is_empty(dir_entry, *entry_type))
+                || (self.empty && !Self::is_empty(dir_entry, entry_type))
         } else {
             true
         }

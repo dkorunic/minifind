@@ -16,7 +16,7 @@ pub fn build_glob_set(
 ) -> Result<GlobSet, Error> {
     let mut builder = GlobSetBuilder::new();
 
-    for p in patterns.map_or(&Vec::new(), |v| v) {
+    for p in patterns.into_iter().flatten() {
         builder.add(
             GlobBuilder::new(p)
                 .case_insensitive(case_insensitive)
