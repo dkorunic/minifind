@@ -114,3 +114,76 @@ fn parse_paths(x: &str) -> Result<PathBuf, Error> {
         Err(anyhow!("'{x}' is not an existing directory"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_threads_min_valid() {
+        assert_eq!(parse_threads("2").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_parse_threads_max_valid() {
+        assert_eq!(parse_threads("65535").unwrap(), 65535);
+    }
+
+    #[test]
+    fn test_parse_threads_mid_valid() {
+        assert_eq!(parse_threads("100").unwrap(), 100);
+    }
+
+    #[test]
+    fn test_parse_threads_zero_invalid() {
+        assert!(parse_threads("0").is_err());
+    }
+
+    #[test]
+    fn test_parse_threads_one_invalid() {
+        assert!(parse_threads("1").is_err());
+    }
+
+    #[test]
+    fn test_parse_threads_too_large() {
+        assert!(parse_threads("65536").is_err());
+    }
+
+    #[test]
+    fn test_parse_threads_non_numeric() {
+        assert!(parse_threads("abc").is_err());
+        assert!(parse_threads("").is_err());
+    }
+
+    #[test]
+    fn test_parse_threads_negative() {
+        // Negative strings fail usize parse
+        assert!(parse_threads("-1").is_err());
+    }
+
+    #[test]
+    fn test_parse_paths_valid_dir() {
+        let tmp = std::env::temp_dir();
+        let result = parse_paths(tmp.to_str().unwrap());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_paths_normalizes() {
+        let tmp = std::env::temp_dir();
+        let result = parse_paths(tmp.to_str().unwrap()).unwrap();
+        // Result is a valid PathBuf
+        assert!(result.is_dir());
+    }
+
+    #[test]
+    fn test_parse_paths_nonexistent() {
+        assert!(parse_paths("/nonexistent/xyz/abc123").is_err());
+    }
+
+    #[test]
+    fn test_parse_paths_file_not_dir() {
+        // /etc/hosts exists on macOS and Linux but is not a directory
+        assert!(parse_paths("/etc/hosts").is_err());
+    }
+}

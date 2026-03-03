@@ -152,3 +152,245 @@ impl FileType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::args;
+    use ignore::WalkBuilder;
+    use std::fs;
+    use tempfile::TempDir;
+
+    // --- FileType::new() ---
+
+    #[test]
+    fn test_new_empty_slice() {
+        let ft = FileType::new(&[]);
+        assert!(!ft.file);
+        assert!(!ft.directory);
+        assert!(!ft.symlink);
+        assert!(!ft.block_device);
+        assert!(!ft.char_device);
+        assert!(!ft.pipe);
+        assert!(!ft.socket);
+        assert!(!ft.empty);
+    }
+
+    #[test]
+    fn test_new_file_only() {
+        let ft = FileType::new(&[args::FileType::File]);
+        assert!(ft.file);
+        assert!(!ft.directory);
+        assert!(!ft.symlink);
+        assert!(!ft.empty);
+    }
+
+    #[test]
+    fn test_new_directory_only() {
+        let ft = FileType::new(&[args::FileType::Directory]);
+        assert!(!ft.file);
+        assert!(ft.directory);
+        assert!(!ft.symlink);
+    }
+
+    #[test]
+    fn test_new_symlink_only() {
+        let ft = FileType::new(&[args::FileType::Symlink]);
+        assert!(!ft.file);
+        assert!(!ft.directory);
+        assert!(ft.symlink);
+    }
+
+    #[test]
+    fn test_new_empty_alone_auto_expands() {
+        // Empty alone must auto-set both file and directory
+        let ft = FileType::new(&[args::FileType::Empty]);
+        assert!(ft.empty);
+        assert!(ft.file);
+        assert!(ft.directory);
+    }
+
+    #[test]
+    fn test_new_empty_with_directory_no_file_expansion() {
+        let ft = FileType::new(&[
+            args::FileType::Empty,
+            args::FileType::Directory,
+        ]);
+        assert!(ft.empty);
+        assert!(ft.directory);
+        assert!(!ft.file);
+    }
+
+    #[test]
+    fn test_new_empty_with_file_no_dir_expansion() {
+        let ft = FileType::new(&[
+            args::FileType::Empty,
+            args::FileType::File,
+        ]);
+        assert!(ft.empty);
+        assert!(ft.file);
+        assert!(!ft.directory);
+    }
+
+    #[test]
+    fn test_new_empty_with_both_no_expansion_needed() {
+        let ft = FileType::new(&[
+            args::FileType::Empty,
+            args::FileType::File,
+            args::FileType::Directory,
+        ]);
+        assert!(ft.empty);
+        assert!(ft.file);
+        assert!(ft.directory);
+    }
+
+    #[test]
+    fn test_new_all_types() {
+        let ft = FileType::new(&[
+            args::FileType::File,
+            args::FileType::Directory,
+            args::FileType::Symlink,
+            args::FileType::BlockDevice,
+            args::FileType::CharDevice,
+            args::FileType::Pipe,
+            args::FileType::Socket,
+        ]);
+        assert!(ft.file);
+        assert!(ft.directory);
+        assert!(ft.symlink);
+        assert!(ft.block_device);
+        assert!(ft.char_device);
+        assert!(ft.pipe);
+        assert!(ft.socket);
+    }
+
+    // --- ignore_filetype() ---
+
+    /// Build a temp directory with a known fixture layout:
+    /// - file.txt  (non-empty regular file)
+    /// - empty.txt (empty regular file)
+    /// - subdir/   (empty subdirectory)
+    fn setup_fixture() -> TempDir {
+        let tmp = TempDir::new().expect("failed to create tempdir");
+        fs::write(tmp.path().join("file.txt"), b"content")
+            .expect("write file.txt");
+        fs::write(tmp.path().join("empty.txt"), b"")
+            .expect("write empty.txt");
+        fs::create_dir(tmp.path().join("subdir"))
+            .expect("create subdir");
+        tmp
+    }
+
+    fn walk_all(root: &std::path::Path) -> Vec<ignore::DirEntry> {
+        WalkBuilder::new(root)
+            .hidden(false)
+            .standard_filters(false)
+            .build()
+            .filter_map(|e| e.ok())
+            .collect()
+    }
+
+    fn find_entry<'a>(
+        entries: &'a [ignore::DirEntry],
+        name: &str,
+        root: &std::path::Path,
+    ) -> &'a ignore::DirEntry {
+        let target = root.join(name);
+        entries
+            .iter()
+            .find(|e| e.path() == target)
+            .unwrap_or_else(|| panic!("{name} not found in walk"))
+    }
+
+    #[test]
+    fn test_ignore_filetype_file_accepted() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::File]);
+        let e = find_entry(&entries, "file.txt", tmp.path());
+        assert!(!ft.ignore_filetype(e));
+    }
+
+    #[test]
+    fn test_ignore_filetype_file_rejected_when_dir_only() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::Directory]);
+        let e = find_entry(&entries, "file.txt", tmp.path());
+        assert!(ft.ignore_filetype(e));
+    }
+
+    #[test]
+    fn test_ignore_filetype_dir_accepted() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::Directory]);
+        let e = find_entry(&entries, "subdir", tmp.path());
+        assert!(!ft.ignore_filetype(e));
+    }
+
+    #[test]
+    fn test_ignore_filetype_dir_rejected_when_file_only() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::File]);
+        let e = find_entry(&entries, "subdir", tmp.path());
+        assert!(ft.ignore_filetype(e));
+    }
+
+    #[test]
+    fn test_ignore_filetype_empty_file_accepted() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        // Empty alone auto-expands to file+dir; empty.txt qualifies
+        let ft = FileType::new(&[args::FileType::Empty]);
+        let e = find_entry(&entries, "empty.txt", tmp.path());
+        assert!(!ft.ignore_filetype(e));
+    }
+
+    #[test]
+    fn test_ignore_filetype_nonempty_file_rejected_with_empty() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::Empty]);
+        let e = find_entry(&entries, "file.txt", tmp.path());
+        // file.txt has content → not empty → rejected
+        assert!(ft.ignore_filetype(e));
+    }
+
+    #[test]
+    fn test_ignore_filetype_empty_dir_accepted() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::Empty]);
+        let e = find_entry(&entries, "subdir", tmp.path());
+        // subdir has no children → empty → accepted
+        assert!(!ft.ignore_filetype(e));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ignore_filetype_symlink_accepted() {
+        let tmp = setup_fixture();
+        let link = tmp.path().join("link.txt");
+        std::os::unix::fs::symlink(tmp.path().join("file.txt"), &link)
+            .expect("create symlink");
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::Symlink]);
+        let e = find_entry(&entries, "link.txt", tmp.path());
+        assert!(!ft.ignore_filetype(e));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ignore_filetype_symlink_rejected_when_file_only() {
+        let tmp = setup_fixture();
+        let link = tmp.path().join("link.txt");
+        std::os::unix::fs::symlink(tmp.path().join("file.txt"), &link)
+            .expect("create symlink");
+        let entries = walk_all(tmp.path());
+        let ft = FileType::new(&[args::FileType::File]);
+        let e = find_entry(&entries, "link.txt", tmp.path());
+        assert!(ft.ignore_filetype(e));
+    }
+}

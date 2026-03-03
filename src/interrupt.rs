@@ -64,3 +64,31 @@ pub fn reset_sigpipe() {
 pub fn reset_sigpipe() {
     // no-op
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_setup_interrupt_handler_returns_ok() {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        assert!(setup_interrupt_handler(&shutdown).is_ok());
+    }
+
+    #[test]
+    fn test_setup_interrupt_handler_multiple_calls() {
+        // signal_hook allows repeated registration; each call must succeed
+        let s1 = Arc::new(AtomicBool::new(false));
+        let s2 = Arc::new(AtomicBool::new(false));
+        assert!(setup_interrupt_handler(&s1).is_ok());
+        assert!(setup_interrupt_handler(&s2).is_ok());
+    }
+
+    #[test]
+    fn test_reset_sigpipe_no_panic() {
+        // Must not panic on any platform
+        reset_sigpipe();
+    }
+}
