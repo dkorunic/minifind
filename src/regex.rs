@@ -16,7 +16,7 @@ use std::os::unix::ffi::OsStrExt;
 ///
 /// A Result containing the constructed `RegexSet` or an Error if the construction fails.
 pub fn build_regex_set(
-    patterns: Option<&Vec<String>>,
+    patterns: Option<&[String]>,
     case_insensitive: bool,
 ) -> Result<RegexSet, Error> {
     RegexSetBuilder::new(patterns.into_iter().flatten())
@@ -68,8 +68,7 @@ mod tests {
 
     #[test]
     fn test_build_regex_set_multiple_patterns() {
-        let patterns =
-            vec![r"\.rs$".to_string(), r"\.toml$".to_string()];
+        let patterns = vec![r"\.rs$".to_string(), r"\.toml$".to_string()];
         let rs = build_regex_set(Some(&patterns), false).unwrap();
         assert!(rs.is_match(b"main.rs"));
         assert!(rs.is_match(b"Cargo.toml"));

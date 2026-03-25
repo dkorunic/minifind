@@ -1,7 +1,7 @@
 use anstyle::AnsiColor;
-use anyhow::{anyhow, Error};
-use clap::builder::{styling::Styles, ValueParser};
+use anyhow::{Error, anyhow};
 use clap::ValueHint;
+use clap::builder::{ValueParser, styling::Styles};
 use clap::{Parser, ValueEnum};
 use normpath::PathExt;
 use std::path::{Path, PathBuf};
@@ -87,7 +87,7 @@ fn parse_threads(x: &str) -> Result<usize, Error> {
     match x.parse::<usize>() {
         Ok(v) => match v {
             v if !(2..=65535).contains(&v) => {
-                Err(anyhow!("threads should be in (2..65536) range"))
+                Err(anyhow!("threads should be in [2..=65535] range"))
             }
             v => Ok(v),
         },
@@ -185,5 +185,22 @@ mod tests {
     fn test_parse_paths_file_not_dir() {
         // /etc/hosts exists on macOS and Linux but is not a directory
         assert!(parse_paths("/etc/hosts").is_err());
+    }
+
+    // A4 — parse_paths normalises away ".." components
+    #[test]
+    fn test_parse_paths_normalizes_dotdot() {
+        use std::path::Component;
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let parent = tmp.path().parent().unwrap();
+        let name = tmp.path().file_name().unwrap();
+        // Construct: <parent>/<name>/../<name> — contains a redundant ".."
+        let with_dotdot = parent.join(name).join("..").join(name);
+        let result = parse_paths(with_dotdot.to_str().unwrap()).unwrap();
+        assert!(
+            !result.components().any(|c| matches!(c, Component::ParentDir)),
+            "normalized path must not contain .. components"
+        );
     }
 }

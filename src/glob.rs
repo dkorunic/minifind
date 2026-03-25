@@ -11,7 +11,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 ///
 /// A Result containing the constructed `GlobSet` or an Error if the construction fails.
 pub fn build_glob_set(
-    patterns: Option<&Vec<String>>,
+    patterns: Option<&[String]>,
     case_insensitive: bool,
 ) -> Result<GlobSet, Error> {
     let mut builder = GlobSetBuilder::new();
@@ -55,8 +55,7 @@ mod tests {
 
     #[test]
     fn test_build_glob_set_multiple_patterns() {
-        let patterns =
-            vec!["*.rs".to_string(), "*.toml".to_string()];
+        let patterns = vec!["*.rs".to_string(), "*.toml".to_string()];
         let gs = build_glob_set(Some(&patterns), false).unwrap();
         assert!(gs.is_match("main.rs"));
         assert!(gs.is_match("Cargo.toml"));
