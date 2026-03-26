@@ -1,6 +1,6 @@
 [package]
 name = "minifind"
-version = "0.7.2"
+version = "0.7.3"
 authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "minimal find reimplementation"
@@ -20,13 +20,12 @@ eula = false
 
 [dependencies]
 mimalloc = "0.1.48"
-anstyle = "1.0.13"
+anstyle = "1.0.14"
 anyhow = "1.0.102"
-clap = { version = "4.5.60", features = ["wrap_help", "unicode", "derive"] }
+clap = { version = "4.6.0", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.25"
 signal-hook = "0.4.3"
 crossbeam-channel = "0.5.15"
-bstr = "1.12.1"
 libc = "0.2.183"
 globset = "0.4.18"
 regex = "1.12.3"
@@ -41,7 +40,6 @@ opt-level = 3
 debug = "none"
 strip = "symbols"
 debug-assertions = false
-overflow-checks = true
 lto = "fat"
 panic = "abort"
 codegen-units = 1

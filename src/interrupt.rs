@@ -1,15 +1,14 @@
 use anyhow::{Context, Error};
 use signal_hook::consts::signal;
 use signal_hook::flag::register;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[cfg(unix)]
 const STOP_SIGNALS: &[i32] = &[
     signal::SIGINT,
     signal::SIGTERM,
     signal::SIGQUIT,
-    signal::SIGPIPE,
     signal::SIGHUP,
     signal::SIGUSR1,
     signal::SIGUSR2,
@@ -68,8 +67,8 @@ pub fn reset_sigpipe() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn test_setup_interrupt_handler_returns_ok() {

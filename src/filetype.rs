@@ -212,10 +212,8 @@ mod tests {
 
     #[test]
     fn test_new_empty_with_directory_no_file_expansion() {
-        let ft = FileType::new(&[
-            args::FileType::Empty,
-            args::FileType::Directory,
-        ]);
+        let ft =
+            FileType::new(&[args::FileType::Empty, args::FileType::Directory]);
         assert!(ft.empty);
         assert!(ft.directory);
         assert!(!ft.file);
@@ -223,10 +221,7 @@ mod tests {
 
     #[test]
     fn test_new_empty_with_file_no_dir_expansion() {
-        let ft = FileType::new(&[
-            args::FileType::Empty,
-            args::FileType::File,
-        ]);
+        let ft = FileType::new(&[args::FileType::Empty, args::FileType::File]);
         assert!(ft.empty);
         assert!(ft.file);
         assert!(!ft.directory);
@@ -274,10 +269,8 @@ mod tests {
         let tmp = TempDir::new().expect("failed to create tempdir");
         fs::write(tmp.path().join("file.txt"), b"content")
             .expect("write file.txt");
-        fs::write(tmp.path().join("empty.txt"), b"")
-            .expect("write empty.txt");
-        fs::create_dir(tmp.path().join("subdir"))
-            .expect("create subdir");
+        fs::write(tmp.path().join("empty.txt"), b"").expect("write empty.txt");
+        fs::create_dir(tmp.path().join("subdir")).expect("create subdir");
         tmp
     }
 
@@ -392,5 +385,86 @@ mod tests {
         let ft = FileType::new(&[args::FileType::File]);
         let e = find_entry(&entries, "link.txt", tmp.path());
         assert!(ft.ignore_filetype(e));
+    }
+
+    // --- FileType::is_empty() ---
+
+    // F6 — is_empty: zero-byte file must return true
+    #[test]
+    fn test_is_empty_zero_byte_file_returns_true() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let e = find_entry(&entries, "empty.txt", tmp.path());
+        let ft = e.file_type().unwrap();
+        assert!(
+            FileType::is_empty(e, ft),
+            "zero-byte file must be reported as empty"
+        );
+    }
+
+    // F6 — is_empty: non-zero file must return false
+    #[test]
+    fn test_is_empty_nonempty_file_returns_false() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        let e = find_entry(&entries, "file.txt", tmp.path());
+        let ft = e.file_type().unwrap();
+        assert!(
+            !FileType::is_empty(e, ft),
+            "file with content must not be reported as empty"
+        );
+    }
+
+    // F7 — is_empty: empty directory must return true
+    #[test]
+    fn test_is_empty_empty_dir_returns_true() {
+        let tmp = setup_fixture();
+        let entries = walk_all(tmp.path());
+        // setup_fixture creates subdir/ with no children
+        let e = find_entry(&entries, "subdir", tmp.path());
+        let ft = e.file_type().unwrap();
+        assert!(
+            FileType::is_empty(e, ft),
+            "empty directory must be reported as empty"
+        );
+    }
+
+    // F7 — is_empty: directory with a child must return false
+    #[test]
+    fn test_is_empty_nonempty_dir_returns_false() {
+        let tmp = TempDir::new().expect("tempdir");
+        let sub = tmp.path().join("nonempty");
+        fs::create_dir(&sub).expect("create subdir");
+        fs::write(sub.join("child.txt"), b"x").expect("write child");
+        let entries = walk_all(tmp.path());
+        let e = find_entry(&entries, "nonempty", tmp.path());
+        let ft = e.file_type().unwrap();
+        assert!(
+            !FileType::is_empty(e, ft),
+            "directory with a child must not be reported as empty"
+        );
+    }
+
+    // F8 — is_empty: correct branch selected for file AND directory
+    #[test]
+    fn test_is_empty_dispatches_correct_branch_for_both_types() {
+        let tmp = TempDir::new().expect("tempdir");
+        fs::write(tmp.path().join("zero.txt"), b"").expect("write zero.txt");
+        fs::create_dir(tmp.path().join("emptydir")).expect("create emptydir");
+        let entries = walk_all(tmp.path());
+
+        let file_e = find_entry(&entries, "zero.txt", tmp.path());
+        let file_ft = file_e.file_type().unwrap();
+        assert!(
+            FileType::is_empty(file_e, file_ft),
+            "zero-byte file must be empty (tests file branch)"
+        );
+
+        let dir_e = find_entry(&entries, "emptydir", tmp.path());
+        let dir_ft = dir_e.file_type().unwrap();
+        assert!(
+            FileType::is_empty(dir_e, dir_ft),
+            "empty directory must be empty (tests directory branch)"
+        );
     }
 }
