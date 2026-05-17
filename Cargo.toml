@@ -19,17 +19,17 @@ license = false
 eula = false
 
 [dependencies]
-mimalloc = "0.1.48"
+mimalloc = "0.1.50"
 anstyle = "1.0.14"
 anyhow = "1.0.102"
-clap = { version = "4.6.0", features = ["wrap_help", "unicode", "derive"] }
+clap = { version = "4.6.1", features = ["wrap_help", "unicode", "derive"] }
 ignore = "0.4.25"
-signal-hook = "0.4.3"
+signal-hook = "0.4.4"
 crossbeam-channel = "0.5.15"
-libc = "0.2.183"
+libc = "0.2.186"
 globset = "0.4.18"
 regex = "1.12.3"
-normpath = "1.5.0"
+normpath = "1.5.1"
 itertools = "0.14.0"
 
 [dev-dependencies]
