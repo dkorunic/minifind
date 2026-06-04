@@ -19,7 +19,7 @@ license = false
 eula = false
 
 [dependencies]
-mimalloc = "0.1.50"
+mimalloc = "0.1.52"
 anstyle = "1.0.14"
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["wrap_help", "unicode", "derive"] }
