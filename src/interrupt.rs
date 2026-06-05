@@ -30,12 +30,12 @@ const STOP_SIGNALS: &[i32] = &[signal::SIGTERM, signal::SIGINT];
 /// # Examples
 ///
 /// ```
-/// use std::sync::{Arc, atomic::AtomicBool};
-/// use anyhow::Error;
+/// use std::sync::Arc;
+/// use std::sync::atomic::AtomicBool;
+/// use minifind::interrupt::setup_interrupt_handler;
 ///
 /// let shutdown = Arc::new(AtomicBool::new(false));
-/// let result = setup_interrupt_handler(&shutdown);
-/// assert!(result.is_ok());
+/// assert!(setup_interrupt_handler(&shutdown).is_ok());
 /// ```
 pub fn setup_interrupt_handler(
     shutdown: &Arc<AtomicBool>,
@@ -43,7 +43,7 @@ pub fn setup_interrupt_handler(
     for sig in STOP_SIGNALS {
         let name =
             signal_hook::low_level::signal_name(*sig).unwrap_or_default();
-        register(*sig, shutdown.clone()).with_context(|| {
+        register(*sig, Arc::clone(shutdown)).with_context(|| {
             format!("Unable to register signal handler for {name}/{sig}")
         })?;
     }
@@ -54,6 +54,9 @@ pub fn setup_interrupt_handler(
 /// Resets the signal handling for SIGPIPE to the default behavior on Unix systems.
 #[cfg(unix)]
 pub fn reset_sigpipe() {
+    // SAFETY: libc::signal is async-signal-safe; resetting SIGPIPE to SIG_DFL
+    // only restores default disposition. Called once before any threads are
+    // spawned, so there is no data race on the process signal table.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }

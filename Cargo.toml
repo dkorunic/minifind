@@ -35,6 +35,10 @@ itertools = "0.14.0"
 [dev-dependencies]
 tempfile = "3"
 
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+redundant_clone = "deny"
+
 [profile.release]
 opt-level = 3
 debug = "none"

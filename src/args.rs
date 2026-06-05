@@ -84,14 +84,12 @@ pub enum FileType {
 /// * `Result<usize, Error>` - An `Ok` variant containing the parsed value if it falls within the range (2..=65535),
 ///   or an `Err` variant with an error message if the value is outside the range.
 fn parse_threads(x: &str) -> Result<usize, Error> {
-    match x.parse::<usize>() {
-        Ok(v) => match v {
-            v if !(2..=65535).contains(&v) => {
-                Err(anyhow!("threads should be in [2..=65535] range"))
-            }
-            v => Ok(v),
-        },
-        Err(e) => Err(Error::from(e)),
+    let v = x.parse::<usize>()?;
+
+    if (2..=65535).contains(&v) {
+        Ok(v)
+    } else {
+        Err(anyhow!("threads should be in [2..=65535] range"))
     }
 }
 

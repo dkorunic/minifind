@@ -5,7 +5,9 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
 
-#[allow(clippy::struct_excessive_bools)]
+// The 8 flags map 1:1 to find(1) -type selectors; a bitflags newtype would
+// obscure that direct mapping for no real gain on a Copy plain-data struct.
+#[expect(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone)]
 pub struct FileType {
     pub empty: bool,

@@ -1,6 +1,8 @@
 use crate::args::Args;
 use anyhow::{Error, anyhow};
 use ignore::{WalkBuilder, WalkParallel};
+use std::path::Path;
+#[cfg(test)]
 use std::path::PathBuf;
 
 /// Builds a walker for traversing paths based on the provided arguments and paths.
@@ -13,9 +15,9 @@ use std::path::PathBuf;
 /// # Returns
 ///
 /// * `Result<WalkParallel, Error>` - A parallel walker configured based on the provided arguments and paths, or an error if no paths are provided.
-pub fn build_walker(
+pub fn build_walker<P: AsRef<Path>>(
     args: &Args,
-    paths: &[PathBuf],
+    paths: &[P],
 ) -> Result<WalkParallel, Error> {
     let first_path =
         paths.first().ok_or_else(|| anyhow!("no paths provided"))?;
@@ -75,7 +77,7 @@ mod tests {
     fn test_build_walker_empty_paths_errors() {
         let tmp = TempDir::new().unwrap();
         let args = base_args(tmp.path().to_path_buf());
-        assert!(build_walker(&args, &[]).is_err());
+        assert!(build_walker(&args, &[] as &[PathBuf]).is_err());
     }
 
     #[test]
