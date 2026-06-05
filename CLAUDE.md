@@ -25,8 +25,8 @@ The minimum supported Rust version (`rust-version = "1.85.1"`) and `edition = "2
 
 `minifind` is a CLI with no async runtime, split into a thin binary (`main.rs`) and a library crate (`lib.rs`) so the pipeline can be integration-tested through its public API. The concurrency model, driven by `lib::run()`, is:
 
-1. **Walker threads** (`ignore::WalkParallel`, `threads - 1` workers) — traverse the filesystem and push `DirEntry` items onto a bounded `crossbeam-channel`.
-2. **Output thread** (1 dedicated thread) — drains the channel, applies glob/regex filters, and writes matched paths to a 256 KB `BufWriter` over a caller-supplied sink (locked stdout in the binary).
+1. **Walker threads** (`ignore::WalkParallel`, `threads - 1` workers) — traverse the filesystem and push `DirEntry` items onto a bounded `crossbeam-channel`. `--threads` defaults to `available_parallelism()` and is validated to `2..=65535` in `args.rs::parse_threads`; the floor of 2 exists because one thread is always reserved for output (`threads - 1` must be ≥ 1).
+2. **Output thread** (1 dedicated thread) — drains the channel, applies glob/regex filters, and writes matched paths to a 256 KB `BufWriter` over a caller-supplied sink (locked stdout in the binary). It reuses a single `line_buf` scratch `Vec` so each entry is emitted with one `write_all` and no per-entry allocation.
 
 `run()` takes a `make_out: FnOnce() -> impl Write` factory rather than a writer, so the sink is constructed *on the output thread* — this lets the binary hand over a non-`Send` `StdoutLock` while tests inject an in-memory sink.
 
