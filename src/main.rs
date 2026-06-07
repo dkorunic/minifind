@@ -2,20 +2,28 @@ use anyhow::Error;
 use clap::Parser;
 use mimalloc::MiMalloc;
 use std::io;
+use std::thread;
 
 use minifind::args::Args;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-/// Parses CLI arguments, restores default `SIGPIPE` handling, and runs the
-/// minifind pipeline writing matched paths to locked stdout.
+/// Binary entry point: wires parsed CLI args into the library pipeline.
 fn main() -> Result<(), Error> {
     let args = Args::parse();
 
-    // reset SIGPIPE signal handling
+    // honor the requested thread count, but warn past the core count
+    let available =
+        thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    if let Some(w) =
+        minifind::args::oversubscription_warning(args.threads, available)
+    {
+        eprintln!("minifind: {w}");
+    }
+
     minifind::interrupt::reset_sigpipe();
 
-    // lock stdout inside the output thread (StdoutLock is not Send)
+    // defer locking stdout to the output thread (StdoutLock is not Send)
     minifind::run(&args, || io::stdout().lock())
 }

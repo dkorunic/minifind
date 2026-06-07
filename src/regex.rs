@@ -6,15 +6,8 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 
-/// Builds a `RegexSet` from a list of regular expression patterns.
-///
-/// # Arguments
-///
-/// * `patterns` - An optional reference to a vector of regular expression patterns.
-///
-/// # Returns
-///
-/// A Result containing the constructed `RegexSet` or an Error if the construction fails.
+/// Builds a byte `RegexSet` from the optional `--regex` patterns (empty set
+/// matches nothing). Errors on an invalid pattern.
 pub fn build_regex_set(
     patterns: Option<&[String]>,
     case_insensitive: bool,

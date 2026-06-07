@@ -147,6 +147,73 @@ fn file_type_filter_still_descends_into_directories() {
     );
 }
 
+// Pins the exact output framing: every emitted path is followed by exactly
+// one newline, with no extra bytes (guards the output thread against a missing
+// newline, a doubled newline, or a doubled path copy).
+#[cfg(unix)]
+#[test]
+fn output_is_each_path_followed_by_a_single_newline() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("d")).unwrap();
+    std::fs::write(tmp.path().join("d/a.txt"), b"x").unwrap();
+    std::fs::write(tmp.path().join("b.txt"), b"x").unwrap();
+    let args = base_args(
+        vec![tmp.path().to_path_buf()],
+        vec![FileType::File, FileType::Directory],
+    );
+
+    let sink = SharedSink(Arc::new(Mutex::new(Vec::new())));
+    let out = sink.clone();
+    minifind::run(&args, move || out).unwrap();
+    let bytes = sink.0.lock().unwrap().clone();
+
+    assert!(!bytes.is_empty(), "output must not be empty");
+    assert_eq!(
+        *bytes.last().unwrap(),
+        b'\n',
+        "output must end with a newline"
+    );
+
+    let segments: Vec<&[u8]> = bytes.split(|&b| b == b'\n').collect();
+    // The split's final segment is empty (trailing newline); no others may be.
+    assert!(segments.last().unwrap().is_empty());
+    for seg in &segments[..segments.len() - 1] {
+        assert!(!seg.is_empty(), "no empty lines / no doubled newline");
+    }
+
+    // Total bytes must equal exactly sum(path_len + 1) — one newline per path,
+    // no extra copies.
+    let paths = parse_paths(&bytes);
+    let expected: usize =
+        paths.iter().map(|p| p.as_os_str().as_bytes().len() + 1).sum();
+    assert_eq!(
+        bytes.len(),
+        expected,
+        "each path must be followed by exactly one newline"
+    );
+}
+
+// Exercises the batched channel path across the BATCH_SIZE (64) boundary:
+// with many entries, full batches are flushed mid-walk and the trailing
+// partial batch is flushed on Drop. Every entry must appear exactly once.
+#[test]
+fn emits_every_entry_across_batch_boundaries() {
+    let tmp = TempDir::new().unwrap();
+    const N: usize = 500; // well over BATCH_SIZE, spanning several batches
+    for i in 0..N {
+        std::fs::write(tmp.path().join(format!("f{i:04}.txt")), b"x").unwrap();
+    }
+    // File-only: the root directory is not emitted, so every result is one
+    // of the N files.
+    let args = base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
+    let results = run_capture(&args);
+    let files = results
+        .iter()
+        .filter(|p| p.extension() == Some("txt".as_ref()))
+        .count();
+    assert_eq!(files, N, "all {N} files must be emitted exactly once");
+}
+
 #[test]
 fn duplicate_paths_are_emitted_once() {
     let tmp = TempDir::new().unwrap();

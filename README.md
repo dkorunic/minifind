@@ -69,30 +69,38 @@ The `--name` option uses Unix-style [glob syntax](https://docs.rs/globset/latest
 
 ## minifind vs GNU find
 
-Hardware: 8-core Xeon E5-1630 with a 4-drive SATA RAID-10 array
+Hardware: 4-core / 8-thread Intel Xeon E5-1630 v3 @ 3.70 GHz, 48 GB RAM.
 
-Benchmark setup:
+Measured with the Criterion benchmark in [`benches/walk.rs`](benches/walk.rs)
+over a shallow clone of the mainline Linux kernel tree (99,893 entries across
+6,158 directories, ~2 GB) with a warm page cache. Both `minifind` (defaults)
+and GNU `find` run as subprocesses, so each pays process-startup cost; output
+is discarded for both. 100 samples each, after an 80 s warm-up:
 
-```shell
-$ cat bench1.sh
-#!/bin/dash
-exec /usr/bin/find / -xdev
-
-$ cat bench2.sh
-#!/bin/dash
-exec /usr/local/sbin/minifind /
+```text
+walk_linux_kernel/minifind   time: [22.411 ms 22.421 ms 22.430 ms]
+walk_linux_kernel/find       time: [77.720 ms 77.757 ms 77.794 ms]
 ```
 
-```shell
-Benchmark 1: ./bench1.sh
-  Time (mean ± σ):      4.655 s ±  0.160 s    [User: 1.287 s, System: 3.366 s]
-  Range (min … max):    4.525 s …  5.016 s    10 runs
+So `minifind` walks the tree in **~22.4 ms vs ~77.8 ms — about 3.5× faster**
+(≈4.5M vs ≈1.3M entries/second). Reproduce with `cargo bench --bench walk`
+(set `BENCH_WALK_DIR=/path/to/tree` to benchmark an existing checkout).
 
-Benchmark 2: ./bench2.sh
-  Time (mean ± σ):      1.244 s ±  0.020 s    [User: 3.921 s, System: 5.908 s]
-  Range (min … max):    1.199 s …  1.271 s    10 runs
+### Why it is faster
 
-Summary
-  ./bench2.sh ran
-    3.74 ± 0.14 times faster than ./bench1.sh
-```
+- **Parallel traversal.** GNU `find` walks on a single thread; `minifind`
+  fans out across all cores via `ignore::WalkParallel` (one worker per core,
+  minus one thread reserved for output), overlapping directory reads. On this
+  8-thread machine that accounts for most of the gap — the advantage scales
+  with core count and shrinks toward parity on a 1–2 core host.
+- **No extra `stat(2)`.** File-type filtering uses the `d_type` already
+  returned by `getdents(2)`, avoiding a per-entry `stat` for `-type`-style
+  matching.
+- **Batched, lock-light output.** Matched entries are streamed to a dedicated
+  output thread in batches (amortizing channel synchronization), then written
+  straight into a 256 KB buffered writer with one copy per entry.
+- **Fast allocator.** `mimalloc` keeps the unavoidable per-entry path
+  allocations cheap.
+
+The warm-cache setup isolates CPU and syscall efficiency rather than disk
+latency; on a cold cache both tools are bound by I/O and the gap narrows.

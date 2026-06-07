@@ -1,8 +1,8 @@
 use anyhow::{Context, Error};
 use signal_hook::consts::signal;
 use signal_hook::flag::register;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[cfg(unix)]
 const STOP_SIGNALS: &[i32] = &[
@@ -17,15 +17,9 @@ const STOP_SIGNALS: &[i32] = &[
 #[cfg(not(unix))]
 const STOP_SIGNALS: &[i32] = &[signal::SIGTERM, signal::SIGINT];
 
-/// Sets up interrupt handlers for termination signals and registers signal handlers for graceful shutdown.
-///
-/// # Arguments
-///
-/// * `shutdown` - A reference to an `AtomicBool` wrapped in an `Arc`, used to control the shutdown process.
-///
-/// # Returns
-///
-/// A `Result` indicating success or an `Error` if unable to register signal handlers.
+/// Points every termination signal at `shutdown`, so the walker can stop
+/// gracefully (it polls the flag) instead of being killed mid-traversal.
+/// Errors if a handler cannot be registered.
 ///
 /// # Examples
 ///
@@ -51,27 +45,25 @@ pub fn setup_interrupt_handler(
     Ok(())
 }
 
-/// Resets the signal handling for SIGPIPE to the default behavior on Unix systems.
+/// Restores default `SIGPIPE` disposition so a closed output pipe (e.g. piping
+/// to `head`) terminates the process instead of surfacing as a write error.
 #[cfg(unix)]
 pub fn reset_sigpipe() {
-    // SAFETY: libc::signal is async-signal-safe; resetting SIGPIPE to SIG_DFL
-    // only restores default disposition. Called once before any threads are
-    // spawned, so there is no data race on the process signal table.
+    // SAFETY: async-signal-safe, and called once before any thread is spawned,
+    // so there is no race on the process signal table.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 }
 
 #[cfg(not(unix))]
-pub fn reset_sigpipe() {
-    // no-op
-}
+pub fn reset_sigpipe() {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
 
     #[test]
     fn test_setup_interrupt_handler_returns_ok() {

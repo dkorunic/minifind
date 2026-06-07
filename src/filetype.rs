@@ -5,84 +5,100 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
 
-// The 8 flags map 1:1 to find(1) -type selectors; a bitflags newtype would
-// obscure that direct mapping for no real gain on a Copy plain-data struct.
-#[expect(clippy::struct_excessive_bools)]
+// Each selectable find(1) -type maps to one bit in a u8 mask. Packing the
+// seven concrete types into a single mask lets `ignore_filetype` reduce the
+// per-entry type test to one bitwise AND instead of a seven-term `||` chain.
+// `--empty` is kept separate because it is an *extra* constraint (a stat),
+// not a type selector. A hand-rolled mask is used over the `bitflags` crate
+// to avoid a dependency for what is a private, internal representation.
+const FT_FILE: u8 = 1 << 0;
+const FT_DIRECTORY: u8 = 1 << 1;
+const FT_SYMLINK: u8 = 1 << 2;
+const FT_BLOCK_DEVICE: u8 = 1 << 3;
+const FT_CHAR_DEVICE: u8 = 1 << 4;
+const FT_PIPE: u8 = 1 << 5;
+const FT_SOCKET: u8 = 1 << 6;
+
 #[derive(Default, Copy, Clone)]
 pub struct FileType {
-    pub empty: bool,
-    pub block_device: bool,
-    pub char_device: bool,
-    pub directory: bool,
-    pub pipe: bool,
-    pub file: bool,
-    pub symlink: bool,
-    pub socket: bool,
+    /// Bitmask of the concrete types to match (see `FT_*` constants).
+    selected: u8,
+    /// When set, an entry must additionally be empty (zero-byte file or
+    /// childless directory) to match — costs one extra stat/`read_dir`.
+    empty: bool,
 }
 
 impl FileType {
-    /// Creates a new instance of `FileType` based on the provided Vec of `args::FileType`.
-    ///
-    /// # Arguments
-    ///
-    /// * `clap_filetype` - A reference to a Vec of `args::FileType` enums.
-    ///
-    /// # Returns
-    ///
-    /// * `Self` - A new instance of `FileType` with flags set based on the input Vec.
+    /// Builds the type mask from the parsed `--type` selectors.
     pub fn new(clap_filetype: &[args::FileType]) -> Self {
-        let mut filetype = Self::default();
+        let mut selected = 0u8;
+        let mut empty = false;
 
         for v in clap_filetype {
             match v {
-                args::FileType::Empty => filetype.empty = true,
-                args::FileType::BlockDevice => filetype.block_device = true,
-                args::FileType::CharDevice => filetype.char_device = true,
-                args::FileType::Directory => filetype.directory = true,
-                args::FileType::Pipe => filetype.pipe = true,
-                args::FileType::File => filetype.file = true,
-                args::FileType::Symlink => filetype.symlink = true,
-                args::FileType::Socket => filetype.socket = true,
+                args::FileType::Empty => empty = true,
+                args::FileType::BlockDevice => selected |= FT_BLOCK_DEVICE,
+                args::FileType::CharDevice => selected |= FT_CHAR_DEVICE,
+                args::FileType::Directory => selected |= FT_DIRECTORY,
+                args::FileType::Pipe => selected |= FT_PIPE,
+                args::FileType::File => selected |= FT_FILE,
+                args::FileType::Symlink => selected |= FT_SYMLINK,
+                args::FileType::Socket => selected |= FT_SOCKET,
             }
         }
 
-        // helpful default of searching for both empty files and directories
-        if filetype.empty && !filetype.directory && !filetype.file {
-            filetype.directory = true;
-            filetype.file = true;
+        // `--empty` alone implies both files and directories
+        if empty && selected & (FT_FILE | FT_DIRECTORY) == 0 {
+            selected |= FT_FILE | FT_DIRECTORY;
         }
 
-        filetype
+        Self { selected, empty }
     }
-    /// Determines whether to ignore a file type based on the flags set in the `FileType` instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `dir_entry` - A reference to the `DirEntry` representing the file type to check.
-    ///
-    /// # Returns
-    ///
-    /// * `bool` - `true` if the file type should be ignored, `false` otherwise.
+
+    /// Whether `dir_entry` should be skipped given the selected types.
     #[inline]
     pub fn ignore_filetype(self, dir_entry: &DirEntry) -> bool {
-        if let Some(entry_type) = dir_entry.file_type() {
-            // works everywhere
-            (!self.file && entry_type.is_file())
-                || (!self.directory && entry_type.is_dir())
-                || (!self.symlink && entry_type.is_symlink())
-                // requires Unix-only std::os::unix::fs::FileTypeExt trait
-                || (!self.block_device && Self::is_block_device(entry_type))
-                || (!self.char_device && Self::is_char_device(entry_type))
-                || (!self.pipe && Self::is_pipe(entry_type))
-                || (!self.socket && Self::is_socket(entry_type))
-                // exclusive search; requires additional lookups
-                || (self.empty && !Self::is_empty(dir_entry, entry_type))
+        let Some(entry_type) = dir_entry.file_type() else {
+            return true;
+        };
+
+        if Self::type_bit(entry_type) & self.selected == 0 {
+            return true;
+        }
+
+        // emptiness check last: it costs an extra stat/`read_dir`
+        self.empty && !Self::is_empty(dir_entry, entry_type)
+    }
+
+    /// Maps a concrete `fs::FileType` to its single `FT_*` mask bit.
+    ///
+    /// File-system types are mutually exclusive, so exactly one bit is set;
+    /// the chain short-circuits at the first match (regular files first, as
+    /// they dominate most trees). Returns 0 for any type with no selector
+    /// (unreachable in practice: Unix covers all seven `st_mode` types and
+    /// non-Unix entries are always file/dir/symlink).
+    #[inline]
+    fn type_bit(entry_type: fs::FileType) -> u8 {
+        if entry_type.is_file() {
+            FT_FILE
+        } else if entry_type.is_dir() {
+            FT_DIRECTORY
+        } else if entry_type.is_symlink() {
+            FT_SYMLINK
+        // remaining types need the Unix-only FileTypeExt helpers below
+        } else if Self::is_block_device(entry_type) {
+            FT_BLOCK_DEVICE
+        } else if Self::is_char_device(entry_type) {
+            FT_CHAR_DEVICE
+        } else if Self::is_pipe(entry_type) {
+            FT_PIPE
+        } else if Self::is_socket(entry_type) {
+            FT_SOCKET
         } else {
-            true
+            0
         }
     }
 
-    /// Checks if the given file type represents a block device.
     #[cfg(unix)]
     #[inline]
     pub fn is_block_device(entry_type: fs::FileType) -> bool {
@@ -95,7 +111,6 @@ impl FileType {
         false
     }
 
-    /// Checks if the given file type represents a character device.
     #[cfg(unix)]
     #[inline]
     pub fn is_char_device(entry_type: fs::FileType) -> bool {
@@ -108,7 +123,6 @@ impl FileType {
         false
     }
 
-    /// Checks if the given file type represents a named FIFO
     #[cfg(unix)]
     #[inline]
     pub fn is_pipe(entry_type: fs::FileType) -> bool {
@@ -121,7 +135,6 @@ impl FileType {
         false
     }
 
-    /// Checks if the given file type represents a socket
     #[cfg(unix)]
     #[inline]
     pub fn is_socket(entry_type: fs::FileType) -> bool {
@@ -134,17 +147,8 @@ impl FileType {
         false
     }
 
-    /// Checks if a directory entry is empty based on the given file type.
-    ///
-    /// If the file type is a directory, it checks if the directory is empty.
-    /// If the file type is not a directory, it checks if the file has a size of 0.
-    ///
-    /// # Arguments
-    /// * `dir_entry` - A reference to the directory entry to check.
-    /// * `entry_type` - The file type of the directory entry.
-    ///
-    /// # Returns
-    /// A boolean value indicating whether the directory entry is empty.
+    /// Whether the entry is empty: a directory with no children, else a
+    /// zero-byte file.
     #[inline]
     pub fn is_empty(dir_entry: &DirEntry, entry_type: fs::FileType) -> bool {
         if entry_type.is_dir() {
@@ -168,39 +172,27 @@ mod tests {
     #[test]
     fn test_new_empty_slice() {
         let ft = FileType::new(&[]);
-        assert!(!ft.file);
-        assert!(!ft.directory);
-        assert!(!ft.symlink);
-        assert!(!ft.block_device);
-        assert!(!ft.char_device);
-        assert!(!ft.pipe);
-        assert!(!ft.socket);
+        assert_eq!(ft.selected, 0);
         assert!(!ft.empty);
     }
 
     #[test]
     fn test_new_file_only() {
         let ft = FileType::new(&[args::FileType::File]);
-        assert!(ft.file);
-        assert!(!ft.directory);
-        assert!(!ft.symlink);
+        assert_eq!(ft.selected, FT_FILE);
         assert!(!ft.empty);
     }
 
     #[test]
     fn test_new_directory_only() {
         let ft = FileType::new(&[args::FileType::Directory]);
-        assert!(!ft.file);
-        assert!(ft.directory);
-        assert!(!ft.symlink);
+        assert_eq!(ft.selected, FT_DIRECTORY);
     }
 
     #[test]
     fn test_new_symlink_only() {
         let ft = FileType::new(&[args::FileType::Symlink]);
-        assert!(!ft.file);
-        assert!(!ft.directory);
-        assert!(ft.symlink);
+        assert_eq!(ft.selected, FT_SYMLINK);
     }
 
     #[test]
@@ -208,8 +200,7 @@ mod tests {
         // Empty alone must auto-set both file and directory
         let ft = FileType::new(&[args::FileType::Empty]);
         assert!(ft.empty);
-        assert!(ft.file);
-        assert!(ft.directory);
+        assert_eq!(ft.selected, FT_FILE | FT_DIRECTORY);
     }
 
     #[test]
@@ -217,16 +208,14 @@ mod tests {
         let ft =
             FileType::new(&[args::FileType::Empty, args::FileType::Directory]);
         assert!(ft.empty);
-        assert!(ft.directory);
-        assert!(!ft.file);
+        assert_eq!(ft.selected, FT_DIRECTORY);
     }
 
     #[test]
     fn test_new_empty_with_file_no_dir_expansion() {
         let ft = FileType::new(&[args::FileType::Empty, args::FileType::File]);
         assert!(ft.empty);
-        assert!(ft.file);
-        assert!(!ft.directory);
+        assert_eq!(ft.selected, FT_FILE);
     }
 
     #[test]
@@ -237,8 +226,7 @@ mod tests {
             args::FileType::Directory,
         ]);
         assert!(ft.empty);
-        assert!(ft.file);
-        assert!(ft.directory);
+        assert_eq!(ft.selected, FT_FILE | FT_DIRECTORY);
     }
 
     #[test]
@@ -252,13 +240,16 @@ mod tests {
             args::FileType::Pipe,
             args::FileType::Socket,
         ]);
-        assert!(ft.file);
-        assert!(ft.directory);
-        assert!(ft.symlink);
-        assert!(ft.block_device);
-        assert!(ft.char_device);
-        assert!(ft.pipe);
-        assert!(ft.socket);
+        assert_eq!(
+            ft.selected,
+            FT_FILE
+                | FT_DIRECTORY
+                | FT_SYMLINK
+                | FT_BLOCK_DEVICE
+                | FT_CHAR_DEVICE
+                | FT_PIPE
+                | FT_SOCKET
+        );
     }
 
     // --- ignore_filetype() ---

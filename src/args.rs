@@ -1,7 +1,7 @@
 use anstyle::AnsiColor;
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
+use clap::builder::{styling::Styles, ValueParser};
 use clap::ValueHint;
-use clap::builder::{ValueParser, styling::Styles};
 use clap::{Parser, ValueEnum};
 use normpath::PathExt;
 use std::path::{Path, PathBuf};
@@ -24,7 +24,8 @@ pub struct Args {
     #[clap(short = 'o', long, action = clap::ArgAction::Set, default_value_t = true, visible_alias = "xdev")]
     pub one_filesystem: bool,
 
-    /// Number of threads to use when calibrating and scanning
+    /// Number of worker threads (default: logical CPU count; exceeding it may
+    /// reduce throughput)
     #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(2))]
     pub threads: usize,
 
@@ -73,16 +74,24 @@ pub enum FileType {
     Socket,
 }
 
-/// Parses a string into an unsigned integer representing the number of threads.
-///
-/// # Arguments
-///
-/// * `x` - A string slice to be parsed into an unsigned integer.
-///
-/// # Returns
-///
-/// * `Result<usize, Error>` - An `Ok` variant containing the parsed value if it falls within the range (2..=65535),
-///   or an `Err` variant with an error message if the value is outside the range.
+/// Warns (the caller still honors the value) when `threads > available`:
+/// throughput typically drops past the core count as the output thread and
+/// channel become the bottleneck.
+#[must_use]
+pub fn oversubscription_warning(
+    threads: usize,
+    available: usize,
+) -> Option<String> {
+    (threads > available).then(|| {
+        format!(
+            "--threads {threads} exceeds available parallelism \
+             ({available}); throughput may decrease"
+        )
+    })
+}
+
+/// Parses `--threads`, enforcing `2..=65535`; the floor is 2 because one
+/// thread is always reserved for output.
 fn parse_threads(x: &str) -> Result<usize, Error> {
     let v = x.parse::<usize>()?;
 
@@ -93,16 +102,7 @@ fn parse_threads(x: &str) -> Result<usize, Error> {
     }
 }
 
-/// Parses a string into a `PathBuf`, checking if the path is a directory and exists.
-///
-/// # Arguments
-///
-/// * `x` - A string slice to be parsed into a `PathBuf`.
-///
-/// # Returns
-///
-/// * `Result<PathBuf, Error>` - An `Ok` variant containing a normalized `PathBuf` if the path is an existing directory,
-///   or an `Err` variant with an error message if the path does not exist or is not a directory.
+/// Parses a path argument, requiring an existing directory and normalizing it.
 fn parse_paths(x: &str) -> Result<PathBuf, Error> {
     let p = Path::new(x);
 
@@ -170,7 +170,6 @@ mod tests {
     fn test_parse_paths_normalizes() {
         let tmp = std::env::temp_dir();
         let result = parse_paths(tmp.to_str().unwrap()).unwrap();
-        // Result is a valid PathBuf
         assert!(result.is_dir());
     }
 
@@ -183,6 +182,21 @@ mod tests {
     fn test_parse_paths_file_not_dir() {
         // /etc/hosts exists on macOS and Linux but is not a directory
         assert!(parse_paths("/etc/hosts").is_err());
+    }
+
+    #[test]
+    fn test_oversubscription_warning_above_cpu_count() {
+        let w = oversubscription_warning(16, 8);
+        assert!(w.is_some());
+        let msg = w.unwrap();
+        assert!(msg.contains("16") && msg.contains('8'));
+    }
+
+    #[test]
+    fn test_oversubscription_warning_at_or_below_cpu_count() {
+        assert!(oversubscription_warning(8, 8).is_none());
+        assert!(oversubscription_warning(4, 8).is_none());
+        assert!(oversubscription_warning(2, 8).is_none());
     }
 
     // A4 — parse_paths normalises away ".." components

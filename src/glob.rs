@@ -1,15 +1,8 @@
 use anyhow::{Context, Error};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
-/// Builds a `GlobSet` from a list of glob patterns.
-///
-/// # Arguments
-///
-/// * `patterns` - An optional reference to a vector of glob patterns.
-///
-/// # Returns
-///
-/// A Result containing the constructed `GlobSet` or an Error if the construction fails.
+/// Builds a `GlobSet` from the optional `--name` patterns (empty set matches
+/// nothing). Errors on an invalid pattern.
 pub fn build_glob_set(
     patterns: Option<&[String]>,
     case_insensitive: bool,

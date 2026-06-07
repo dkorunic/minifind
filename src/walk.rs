@@ -1,20 +1,13 @@
 use crate::args::Args;
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use ignore::{WalkBuilder, WalkParallel};
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
-/// Builds a walker for traversing paths based on the provided arguments and paths.
-///
-/// # Arguments
-///
-/// * `args` - A reference to the Args struct containing configuration options for the walker.
-/// * `paths` - A slice of `PathBuf` representing the paths to traverse.
-///
-/// # Returns
-///
-/// * `Result<WalkParallel, Error>` - A parallel walker configured based on the provided arguments and paths, or an error if no paths are provided.
+/// Configures an `ignore::WalkParallel` from `args`, rooted at `paths`.
+/// Errors if `paths` is empty. Standard ignore filters and hidden-file
+/// skipping are disabled: minifind traverses everything.
 pub fn build_walker<P: AsRef<Path>>(
     args: &Args,
     paths: &[P],
