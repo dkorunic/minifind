@@ -1,243 +1,499 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+// SPDX-License-Identifier: MIT
+
+//! Custom parallel filesystem walker: a `crossbeam-deque` work-stealing
+//! engine over a `cfg`-split leaf (`unix`/`fallback`).
+
 use crate::args::Args;
-use anyhow::{anyhow, Error};
-use ignore::{WalkBuilder, WalkParallel};
-use std::path::Path;
-#[cfg(test)]
-use std::path::PathBuf;
+use crate::filetype::EntryType;
+use crossbeam_deque::{Injector, Steal, Stealer, Worker};
+use crossbeam_utils::Backoff;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
 
-/// Configures an `ignore::WalkParallel` from `args`, rooted at `paths`.
-/// Errors if `paths` is empty. Standard ignore filters and hidden-file
-/// skipping are disabled: minifind traverses everything.
-pub fn build_walker<P: AsRef<Path>>(
-    args: &Args,
-    paths: &[P],
-) -> Result<WalkParallel, Error> {
-    let first_path =
-        paths.first().ok_or_else(|| anyhow!("no paths provided"))?;
+#[cfg(unix)]
+#[path = "walk/unix.rs"]
+mod platform;
+#[cfg(not(unix))]
+#[path = "walk/fallback.rs"]
+mod platform;
 
-    let mut builder = WalkBuilder::new(first_path);
-    builder
-        .hidden(false)
-        .standard_filters(false)
-        .follow_links(args.follow_symlinks)
-        .same_file_system(args.one_filesystem)
-        .max_depth(args.max_depth);
+/// Whether traversal should continue or stop entirely.
+pub enum WalkState {
+    Continue,
+    Quit,
+}
 
-    for p in &paths[1..] {
-        builder.add(p);
+/// A matched filesystem entry handed to the visitor.
+pub struct Entry {
+    pub path: PathBuf,
+    pub file_type: EntryType,
+}
+
+impl Entry {
+    /// Final path component (used for `--name` glob matching); falls back to
+    /// the whole path for roots like `/`.
+    #[inline]
+    pub fn file_name(&self) -> &OsStr {
+        self.path.file_name().unwrap_or_else(|| self.path.as_os_str())
+    }
+}
+
+struct Task {
+    path: PathBuf,
+    file_type: EntryType,
+    depth: usize,
+    root_dev: u64,
+    // (dev, ino) of every ancestor directory; Some only when following
+    // symlinks, so the common path stays allocation-free.
+    ancestors: Option<Arc<Vec<(u64, u64)>>>,
+}
+
+/// Walks `roots` in parallel, invoking a fresh per-thread visitor (from
+/// `make_visitor`) for every entry. Directory read/open errors are skipped.
+pub fn walk_parallel<F, V>(args: &Args, roots: &[&Path], make_visitor: F)
+where
+    F: Fn() -> V + Sync,
+    V: FnMut(Entry) -> WalkState + Send,
+{
+    let n_workers = (args.threads - 1).max(1);
+    let injector = Injector::new();
+    // outstanding tasks (pushed but not yet fully processed); reaching 0 is
+    // the termination signal. `quit` is the early-stop signal (Quit visitor).
+    let pending = AtomicUsize::new(0);
+    let quit = AtomicBool::new(false);
+
+    for root in roots {
+        let Ok((dev, _ino)) = platform::path_id(root) else {
+            continue;
+        };
+        // Ancestors hold the parent chain only; `descend` appends each
+        // directory's own id before recursing, so a root starts empty.
+        let ancestors = args.follow_symlinks.then(|| Arc::new(Vec::new()));
+        pending.fetch_add(1, Ordering::SeqCst);
+        injector.push(Task {
+            path: root.to_path_buf(),
+            file_type: EntryType::Dir,
+            depth: 0,
+            root_dev: dev,
+            ancestors,
+        });
     }
 
-    // reserve 1 thread for output
-    Ok(builder.threads(args.threads - 1).build_parallel())
+    let workers: Vec<Worker<Task>> =
+        (0..n_workers).map(|_| Worker::new_lifo()).collect();
+    let stealers: Vec<Stealer<Task>> =
+        workers.iter().map(Worker::stealer).collect();
+
+    thread::scope(|scope| {
+        for worker in workers {
+            let injector = &injector;
+            let stealers = &stealers;
+            let pending = &pending;
+            let quit = &quit;
+            let make_visitor = &make_visitor;
+            scope.spawn(move || {
+                let mut visitor = make_visitor();
+                run_worker(
+                    args,
+                    &worker,
+                    injector,
+                    stealers,
+                    pending,
+                    quit,
+                    &mut visitor,
+                );
+            });
+        }
+    });
+}
+
+fn run_worker<V: FnMut(Entry) -> WalkState>(
+    args: &Args,
+    local: &Worker<Task>,
+    injector: &Injector<Task>,
+    stealers: &[Stealer<Task>],
+    pending: &AtomicUsize,
+    quit: &AtomicBool,
+    visitor: &mut V,
+) {
+    let backoff = Backoff::new();
+    loop {
+        if quit.load(Ordering::Relaxed) {
+            return;
+        }
+        match find_task(local, injector, stealers) {
+            Some(task) => {
+                backoff.reset();
+                process(args, task, local, pending, quit, visitor);
+                pending.fetch_sub(1, Ordering::SeqCst);
+            }
+            None => {
+                if pending.load(Ordering::SeqCst) == 0 {
+                    return;
+                }
+                backoff.snooze();
+            }
+        }
+    }
+}
+
+fn find_task(
+    local: &Worker<Task>,
+    injector: &Injector<Task>,
+    stealers: &[Stealer<Task>],
+) -> Option<Task> {
+    local.pop().or_else(|| {
+        std::iter::repeat_with(|| {
+            injector
+                .steal_batch_and_pop(local)
+                .or_else(|| stealers.iter().map(Stealer::steal).collect())
+        })
+        .find(|s| !s.is_retry())
+        .and_then(Steal::success)
+    })
+}
+
+fn process<V: FnMut(Entry) -> WalkState>(
+    args: &Args,
+    task: Task,
+    local: &Worker<Task>,
+    pending: &AtomicUsize,
+    quit: &AtomicBool,
+    visitor: &mut V,
+) {
+    if let WalkState::Quit =
+        visitor(Entry { path: task.path.clone(), file_type: task.file_type })
+    {
+        quit.store(true, Ordering::Relaxed);
+        return;
+    }
+    descend(args, &task, local, pending);
+}
+
+fn descend(
+    args: &Args,
+    task: &Task,
+    local: &Worker<Task>,
+    pending: &AtomicUsize,
+) {
+    let follow = match task.file_type {
+        // depth 0 is a command-line root: follow it even if it is a
+        // symlink-to-dir (like find(1)); deeper real dirs use O_NOFOLLOW.
+        EntryType::Dir => task.depth == 0,
+        EntryType::Symlink if args.follow_symlinks => true,
+        _ => return,
+    };
+    if let Some(max) = args.max_depth {
+        if task.depth >= max {
+            return;
+        }
+    }
+
+    let Ok(dir) = platform::open_dir(&task.path, follow) else {
+        return;
+    };
+    let Ok((dev, ino)) = platform::dir_id(&dir) else {
+        return;
+    };
+    if args.one_filesystem && dev != task.root_dev {
+        return;
+    }
+    if let Some(anc) = &task.ancestors {
+        if anc.contains(&(dev, ino)) {
+            return; // symlink cycle
+        }
+    }
+    let child_ancestors = task.ancestors.as_ref().map(|a| {
+        let mut v = (**a).clone();
+        v.push((dev, ino));
+        Arc::new(v)
+    });
+
+    // Iterate inline (no collected Vec); build each child path directly.
+    let _ = platform::for_each_entry(&dir, &task.path, |path, raw_type| {
+        let file_type = match raw_type {
+            Some(t) => t,
+            // DT_UNKNOWN: resolve the entry's own type; skip on failure
+            None => match platform::lstat_type(&path) {
+                Ok(t) => t,
+                Err(_) => return,
+            },
+        };
+        pending.fetch_add(1, Ordering::SeqCst);
+        local.push(Task {
+            path,
+            file_type,
+            depth: task.depth + 1,
+            root_dev: task.root_dev,
+            ancestors: child_ancestors.clone(),
+        });
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::args;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
     use tempfile::TempDir;
 
-    fn base_args(path: PathBuf) -> Args {
-        // Construct minimal valid Args; threads must be >= 2 because
-        // build_walker reserves one thread for output (threads - 1).
+    fn base_args(threads: usize) -> Args {
         Args {
-            threads: 2,
-            path: vec![path],
+            threads,
+            path: vec![],
             follow_symlinks: false,
             one_filesystem: true,
             max_depth: None,
             name: None,
             regex: None,
             case_insensitive: false,
-            file_type: vec![
-                args::FileType::File,
-                args::FileType::Directory,
-                args::FileType::Symlink,
-            ],
+            file_type: vec![],
         }
     }
 
-    #[test]
-    fn test_build_walker_no_panic() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().to_path_buf();
-        let args = base_args(path.clone());
-        let _walker = build_walker(&args, &[path]).unwrap();
-    }
-
-    #[test]
-    fn test_build_walker_empty_paths_errors() {
-        let tmp = TempDir::new().unwrap();
-        let args = base_args(tmp.path().to_path_buf());
-        assert!(build_walker(&args, &[] as &[PathBuf]).is_err());
-    }
-
-    #[test]
-    fn test_build_walker_with_max_depth() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().to_path_buf();
-        let mut args = base_args(path.clone());
-        args.max_depth = Some(1);
-        let _walker = build_walker(&args, &[path]).unwrap();
-    }
-
-    #[test]
-    fn test_build_walker_follow_symlinks() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().to_path_buf();
-        let mut args = base_args(path.clone());
-        args.follow_symlinks = true;
-        let _walker = build_walker(&args, &[path]).unwrap();
-    }
-
-    #[test]
-    fn test_build_walker_no_one_filesystem() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().to_path_buf();
-        let mut args = base_args(path.clone());
-        args.one_filesystem = false;
-        let _walker = build_walker(&args, &[path]).unwrap();
-    }
-
-    #[test]
-    fn test_build_walker_multiple_paths() {
-        let tmp1 = TempDir::new().unwrap();
-        let tmp2 = TempDir::new().unwrap();
-        let p1 = tmp1.path().to_path_buf();
-        let p2 = tmp2.path().to_path_buf();
-        let args = base_args(p1.clone());
-        let _walker = build_walker(&args, &[p1, p2]).unwrap();
-    }
-
-    fn collect_walk_parallel(walker: WalkParallel) -> Vec<PathBuf> {
-        let paths: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
-        walker.run(|| {
-            let paths = Arc::clone(&paths);
-            Box::new(move |entry| {
-                if let Ok(e) = entry {
-                    paths.lock().unwrap().push(e.path().to_path_buf());
-                }
-                ignore::WalkState::Continue
-            })
+    fn collect(args: &Args, roots: &[&Path]) -> Vec<PathBuf> {
+        let sink = Mutex::new(Vec::new());
+        walk_parallel(args, roots, || {
+            |e: Entry| {
+                sink.lock().unwrap().push(e.path);
+                WalkState::Continue
+            }
         });
-        Arc::try_unwrap(paths).unwrap().into_inner().unwrap()
+        sink.into_inner().unwrap()
     }
 
     #[test]
-    fn test_build_walker_yields_entries() {
-        use std::fs;
-
+    fn emits_root_and_all_descendants() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("a.txt"), b"hi").unwrap();
-        let path = tmp.path().to_path_buf();
-        let args = base_args(path.clone());
-        let walker = build_walker(&args, &[path]).unwrap();
-        let paths = collect_walk_parallel(walker);
+        std::fs::create_dir(tmp.path().join("a")).unwrap();
+        std::fs::write(tmp.path().join("a/f.txt"), b"x").unwrap();
+        std::fs::write(tmp.path().join("g.txt"), b"x").unwrap();
+        let root = tmp.path();
+        let got = collect(&base_args(4), &[root]);
+        assert!(got.iter().any(|p| p == root));
+        assert!(got.iter().any(|p| p.ends_with("a")));
+        assert!(got.iter().any(|p| p.ends_with("a/f.txt")));
+        assert!(got.iter().any(|p| p.ends_with("g.txt")));
+        assert_eq!(got.len(), 4);
+    }
+
+    #[test]
+    fn terminates_on_empty_directory() {
+        let tmp = TempDir::new().unwrap();
+        let got = collect(&base_args(4), &[tmp.path()]);
+        assert_eq!(got, vec![tmp.path().to_path_buf()]);
+    }
+
+    #[test]
+    fn terminates_on_deep_chain() {
+        let tmp = TempDir::new().unwrap();
+        let mut p = tmp.path().to_path_buf();
+        for i in 0..50 {
+            p = p.join(format!("d{i}"));
+            std::fs::create_dir(&p).unwrap();
+        }
+        let got = collect(&base_args(4), &[tmp.path()]);
+        assert_eq!(got.len(), 51);
+    }
+
+    #[test]
+    fn max_depth_limits_descent() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("l1/l2")).unwrap();
+        std::fs::write(tmp.path().join("l1/l2/deep.txt"), b"x").unwrap();
+        let mut args = base_args(4);
+        args.max_depth = Some(1);
+        let got = collect(&args, &[tmp.path()]);
+        assert!(got.iter().any(|p| p.ends_with("l1")));
+        assert!(!got.iter().any(|p| p.ends_with("deep.txt")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_not_followed_by_default() {
+        let tmp = TempDir::new().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("inside.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink(&real, tmp.path().join("link")).unwrap();
+        let got = collect(&base_args(4), &[tmp.path()]);
+        assert!(got.iter().any(|p| p.ends_with("link")));
+        assert!(!got.iter().any(|p| p.starts_with(tmp.path().join("link"))
+            && p.ends_with("inside.txt")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_root_is_traversed() {
+        // A command-line root that is a symlink to a directory must be walked
+        // (find(1) behavior), even with follow_symlinks=false.
+        let tmp = TempDir::new().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("inside.txt"), b"x").unwrap();
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let got = collect(&base_args(4), &[link.as_path()]);
         assert!(
-            paths.iter().any(|p| p.ends_with("a.txt")),
-            "a.txt not found in walk results"
+            got.iter().any(|p| p.ends_with("inside.txt")),
+            "symlinked root must be descended"
         );
     }
 
-    // W1 — hidden(false): dot-files must appear in results
+    #[cfg(unix)]
     #[test]
-    fn test_walk_hidden_files_are_visible() {
+    fn symlink_cycle_does_not_hang() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        std::os::unix::fs::symlink(&a, a.join("loop")).unwrap();
+        let mut args = base_args(4);
+        args.follow_symlinks = true;
+        let got = collect(&args, &[tmp.path()]);
+        assert!(got.iter().any(|p| p.ends_with("a")));
+    }
+
+    // Like `collect`, but keeps each entry's classified type.
+    fn collect_typed(
+        args: &Args,
+        roots: &[&Path],
+    ) -> Vec<(PathBuf, EntryType)> {
+        let sink = Mutex::new(Vec::new());
+        walk_parallel(args, roots, || {
+            |e: Entry| {
+                sink.lock().unwrap().push((e.path, e.file_type));
+                WalkState::Continue
+            }
+        });
+        sink.into_inner().unwrap()
+    }
+
+    #[test]
+    fn multiple_roots_all_traversed() {
+        let r1 = TempDir::new().unwrap();
+        let r2 = TempDir::new().unwrap();
+        std::fs::write(r1.path().join("one.txt"), b"x").unwrap();
+        std::fs::write(r2.path().join("two.txt"), b"x").unwrap();
+        let got = collect(&base_args(4), &[r1.path(), r2.path()]);
+        assert!(got.iter().any(|p| p.ends_with("one.txt")));
+        assert!(got.iter().any(|p| p.ends_with("two.txt")));
+        // 2 roots + 2 files, each root emitted exactly once
+        assert_eq!(got.len(), 4);
+    }
+
+    #[test]
+    fn hidden_files_are_emitted() {
+        // minifind shows dotfiles (unlike the ignore crate's default).
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join(".hidden"), b"x").unwrap();
-        let path = tmp.path().to_path_buf();
-        let args = base_args(path.clone());
-        let walker = build_walker(&args, &[path]).unwrap();
-        let paths = collect_walk_parallel(walker);
-        assert!(
-            paths.iter().any(|p| p.ends_with(".hidden")),
-            ".hidden file must appear in walk results"
-        );
+        std::fs::create_dir(tmp.path().join(".dir")).unwrap();
+        let got = collect(&base_args(4), &[tmp.path()]);
+        assert!(got.iter().any(|p| p.ends_with(".hidden")));
+        assert!(got.iter().any(|p| p.ends_with(".dir")));
     }
 
-    // W2 — standard_filters(false): .gitignore rules must be ignored
     #[test]
-    fn test_walk_gitignore_not_applied() {
+    fn no_duplicate_or_lost_entries() {
+        // Exact set equality guards against the walker losing or duplicating
+        // entries under work stealing.
         let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join(".gitignore"), b"target\n").unwrap();
-        std::fs::write(tmp.path().join("target"), b"x").unwrap();
-        let path = tmp.path().to_path_buf();
-        let args = base_args(path.clone());
-        let walker = build_walker(&args, &[path]).unwrap();
-        let paths = collect_walk_parallel(walker);
-        assert!(
-            paths.iter().any(|p| p.ends_with("target")),
-            "'target' must appear even though it is in .gitignore"
-        );
+        std::fs::create_dir(tmp.path().join("a")).unwrap();
+        std::fs::create_dir(tmp.path().join("b")).unwrap();
+        std::fs::write(tmp.path().join("a/x.txt"), b"x").unwrap();
+        std::fs::write(tmp.path().join("b/y.txt"), b"x").unwrap();
+        std::fs::write(tmp.path().join("c.txt"), b"x").unwrap();
+
+        let got = collect(&base_args(8), &[tmp.path()]);
+        let mut expected = vec![
+            tmp.path().to_path_buf(),
+            tmp.path().join("a"),
+            tmp.path().join("b"),
+            tmp.path().join("a/x.txt"),
+            tmp.path().join("b/y.txt"),
+            tmp.path().join("c.txt"),
+        ];
+        let mut sorted = got.clone();
+        sorted.sort();
+        expected.sort();
+        assert_eq!(sorted, expected, "walk must emit each entry exactly once");
+        assert_eq!(got.len(), 6, "no duplicates");
     }
 
-    // W3 — max_depth: entries deeper than the limit must be absent
     #[test]
-    fn test_walk_max_depth_excludes_deep_entries() {
+    fn max_depth_zero_emits_only_root() {
         let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("level1").join("level2"))
-            .unwrap();
-        std::fs::write(
-            tmp.path().join("level1").join("level2").join("deep.txt"),
-            b"x",
+        std::fs::write(tmp.path().join("child.txt"), b"x").unwrap();
+        let mut args = base_args(4);
+        args.max_depth = Some(0);
+        let got = collect(&args, &[tmp.path()]);
+        assert_eq!(got, vec![tmp.path().to_path_buf()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn classifies_entry_types() {
+        // A symlink must be reported as Symlink (its own type, not the
+        // target's) so `--type` selectors behave like find's default lstat.
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), b"x").unwrap();
+        std::fs::create_dir(tmp.path().join("d")).unwrap();
+        std::os::unix::fs::symlink(
+            tmp.path().join("f.txt"),
+            tmp.path().join("l"),
         )
         .unwrap();
-        let path = tmp.path().to_path_buf();
-        let mut args = base_args(path.clone());
-        args.max_depth = Some(1);
-        let walker = build_walker(&args, &[path]).unwrap();
-        let paths = collect_walk_parallel(walker);
-        assert!(
-            !paths.iter().any(|p| p.ends_with("deep.txt")),
-            "deep.txt at depth 2 must not appear when max_depth=1"
-        );
+
+        let got = collect_typed(&base_args(4), &[tmp.path()]);
+        let ty = |name: &str| {
+            got.iter()
+                .find(|(p, _)| p.ends_with(name))
+                .unwrap_or_else(|| panic!("{name} missing"))
+                .1
+        };
+        assert_eq!(ty("f.txt"), EntryType::File);
+        assert_eq!(ty("d"), EntryType::Dir);
+        assert_eq!(ty("l"), EntryType::Symlink);
     }
 
-    // W4 — follow_links(false): symlink contents must not be traversed
     #[cfg(unix)]
     #[test]
-    fn test_walk_symlink_not_followed_when_disabled() {
+    fn follow_symlinks_descends_into_symlinked_dir() {
         let tmp = TempDir::new().unwrap();
-        let real_dir = tmp.path().join("real");
-        std::fs::create_dir(&real_dir).unwrap();
-        std::fs::write(real_dir.join("inside.txt"), b"x").unwrap();
-        std::os::unix::fs::symlink(&real_dir, tmp.path().join("link"))
-            .unwrap();
-        let path = tmp.path().to_path_buf();
-        let mut args = base_args(path.clone());
-        args.follow_symlinks = false;
-        let walker = build_walker(&args, &[path]).unwrap();
-        let paths = collect_walk_parallel(walker);
-        let link_traversed = paths.iter().any(|p| {
-            p.starts_with(tmp.path().join("link")) && p.ends_with("inside.txt")
-        });
-        assert!(
-            !link_traversed,
-            "symlink contents must not be walked when follow_symlinks=false"
-        );
-    }
+        let real = tmp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("inside.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink(&real, tmp.path().join("link")).unwrap();
 
-    // W4 — follow_links(true): symlink contents must be traversed
-    #[cfg(unix)]
-    #[test]
-    fn test_walk_symlink_followed_when_enabled() {
-        let tmp = TempDir::new().unwrap();
-        let real_dir = tmp.path().join("real");
-        std::fs::create_dir(&real_dir).unwrap();
-        std::fs::write(real_dir.join("inside.txt"), b"x").unwrap();
-        std::os::unix::fs::symlink(&real_dir, tmp.path().join("link"))
-            .unwrap();
-        let path = tmp.path().to_path_buf();
-        let mut args = base_args(path.clone());
+        let mut args = base_args(4);
         args.follow_symlinks = true;
-        let walker = build_walker(&args, &[path]).unwrap();
-        let paths = collect_walk_parallel(walker);
-        let link_traversed = paths.iter().any(|p| {
-            p.starts_with(tmp.path().join("link")) && p.ends_with("inside.txt")
-        });
+        let got = collect(&args, &[tmp.path()]);
+        // reached through the symlink, not just the real path
         assert!(
-            link_traversed,
-            "symlink contents must be walked when follow_symlinks=true"
+            got.iter().any(|p| p.starts_with(tmp.path().join("link"))
+                && p.ends_with("inside.txt")),
+            "follow_symlinks must descend into a symlinked directory"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broken_symlink_emitted_not_descended() {
+        // A dangling symlink must be emitted (as a symlink) without error,
+        // even when following is enabled (the open simply fails).
+        let tmp = TempDir::new().unwrap();
+        std::os::unix::fs::symlink(
+            "/nonexistent/xyz/abc",
+            tmp.path().join("broken"),
+        )
+        .unwrap();
+        let mut args = base_args(4);
+        args.follow_symlinks = true;
+        let got = collect_typed(&args, &[tmp.path()]);
+        let broken = got.iter().find(|(p, _)| p.ends_with("broken"));
+        assert!(broken.is_some(), "broken symlink must still be emitted");
+        assert_eq!(broken.unwrap().1, EntryType::Symlink);
     }
 }

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+// SPDX-License-Identifier: MIT
+
 //! Integration tests that drive the real `minifind::run` pipeline end to end,
 //! capturing its byte output through a shared in-memory sink instead of
 //! re-implementing the walker/filter/output wiring.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+// SPDX-License-Identifier: MIT
+
 use anstyle::AnsiColor;
 use anyhow::{anyhow, Error};
 use clap::builder::{styling::Styles, ValueParser};

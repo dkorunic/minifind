@@ -75,24 +75,27 @@ Measured with the Criterion benchmark in [`benches/walk.rs`](benches/walk.rs)
 over a shallow clone of the mainline Linux kernel tree (99,893 entries across
 6,158 directories, ~2 GB) with a warm page cache. Both `minifind` (defaults)
 and GNU `find` run as subprocesses, so each pays process-startup cost; output
-is discarded for both. 100 samples each, after an 80 s warm-up:
+is discarded for both. 100 samples each:
 
 ```text
-walk_linux_kernel/minifind   time: [22.411 ms 22.421 ms 22.430 ms]
-walk_linux_kernel/find       time: [77.720 ms 77.757 ms 77.794 ms]
+walk_linux_kernel/minifind   time: [20.630 ms 20.710 ms 20.797 ms]
+walk_linux_kernel/find       time: [78.989 ms 79.237 ms 79.497 ms]
 ```
 
-So `minifind` walks the tree in **~22.4 ms vs ~77.8 ms — about 3.5× faster**
-(≈4.5M vs ≈1.3M entries/second). Reproduce with `cargo bench --bench walk`
+So `minifind` walks the tree in **~20.7 ms vs ~79.2 ms — about 3.8× faster**
+(≈4.8M vs ≈1.3M entries/second). Reproduce with `cargo bench --bench walk`
 (set `BENCH_WALK_DIR=/path/to/tree` to benchmark an existing checkout).
 
 ### Why it is faster
 
 - **Parallel traversal.** GNU `find` walks on a single thread; `minifind`
-  fans out across all cores via `ignore::WalkParallel` (one worker per core,
-  minus one thread reserved for output), overlapping directory reads. On this
-  8-thread machine that accounts for most of the gap — the advantage scales
-  with core count and shrinks toward parity on a 1–2 core host.
+  fans out across all cores with its own work-stealing walker (one worker per
+  core, minus one thread reserved for output), overlapping directory reads. On
+  this 8-thread machine that accounts for most of the gap — the advantage
+  scales with core count and shrinks toward parity on a 1–2 core host.
+- **Purpose-built walker.** `minifind` uses its own walker (raw `getdents64`
+  via `rustix` on Unix, `std::fs` elsewhere) rather than a general-purpose
+  crate, so it carries no gitignore/hidden-file bookkeeping it does not need.
 - **No extra `stat(2)`.** File-type filtering uses the `d_type` already
   returned by `getdents(2)`, avoiding a per-entry `stat` for `-type`-style
   matching.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+// SPDX-License-Identifier: MIT
+
 //! Bitmask `ignore_filetype` vs the original seven-term `||` chain.
 //!
 //! Entries are collected before the timed loop (measures classification, not
@@ -9,8 +12,21 @@ use std::hint::black_box;
 use criterion::{criterion_group, criterion_main, Criterion};
 use ignore::{DirEntry, WalkBuilder};
 use minifind::args;
-use minifind::filetype::FileType;
+use minifind::filetype::{EntryType, FileType};
 use tempfile::TempDir;
+
+/// Maps an `ignore::DirEntry`'s `file_type()` to the walker's `EntryType`,
+/// mirroring the classification the real walker performs from `d_type`.
+fn entry_type(dir_entry: &DirEntry) -> Option<EntryType> {
+    let t = dir_entry.file_type()?;
+    Some(if t.is_dir() {
+        EntryType::Dir
+    } else if t.is_symlink() {
+        EntryType::Symlink
+    } else {
+        EntryType::File
+    })
+}
 
 /// Populates a fixture tree and collects every `DirEntry` from a single walk.
 fn collect_entries(tmp: &TempDir) -> Vec<DirEntry> {
@@ -119,7 +135,10 @@ fn bench_ignore_filetype(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = 0usize;
             for e in &entries {
-                acc += usize::from(ft.ignore_filetype(black_box(e)));
+                let e = black_box(e);
+                if let Some(ty) = entry_type(e) {
+                    acc += usize::from(ft.ignore_filetype(ty, e.path()));
+                }
             }
             black_box(acc)
         });

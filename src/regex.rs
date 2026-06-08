@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+// SPDX-License-Identifier: MIT
+
 use anyhow::{Context, Error};
 use regex::bytes::{RegexSet, RegexSetBuilder};
 use std::borrow::Cow;

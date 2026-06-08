@@ -23,9 +23,11 @@ mimalloc = "0.1.52"
 anstyle = "1.0.14"
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["wrap_help", "unicode", "derive"] }
-ignore = "0.4.25"
 signal-hook = "0.4.4"
 crossbeam-channel = "0.5.15"
+crossbeam-deque = "0.8"
+crossbeam-utils = "0.8"
+rustix = { version = "1", features = ["fs"] }
 libc = "0.2.186"
 globset = "0.4.18"
 regex = "1.12.3"
@@ -34,6 +36,7 @@ itertools = "0.14.0"
 
 [dev-dependencies]
 tempfile = "3"
+ignore = "0.4.25"
 criterion = { version = "0.8", default-features = false, features = [
     "cargo_bench_support",
 ] }

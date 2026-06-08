@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+// SPDX-License-Identifier: MIT
+
 use anyhow::{Context, Error};
 use signal_hook::consts::signal;
 use signal_hook::flag::register;

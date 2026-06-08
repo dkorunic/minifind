@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+// SPDX-License-Identifier: MIT
+
 //! End-to-end `minifind` vs GNU `find` over a Linux kernel tree, mirroring
 //! <https://github.com/dkorunic/bench_walk>.
 //!
