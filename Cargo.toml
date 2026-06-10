@@ -26,16 +26,16 @@ signal-hook = "0.4.4"
 crossbeam-channel = "0.5.15"
 crossbeam-deque = "0.8"
 crossbeam-utils = "0.8"
-rustix = { version = "1", features = ["fs"] }
+rustix = { version = "1.1.4", features = ["fs"] }
 libc = "0.2.186"
 globset = "0.4.18"
-regex = "1.12.3"
+regex = "1.12.4"
 normpath = "1.5.1"
 itertools = "0.14.0"
 
 [dev-dependencies]
 tempfile = "3"
-ignore = "0.4.25"
+ignore = "0.4.26"
 criterion = { version = "0.8", default-features = false, features = [
     "cargo_bench_support",
 ] }
