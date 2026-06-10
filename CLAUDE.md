@@ -37,7 +37,7 @@ The minimum supported Rust version (`rust-version = "1.85.1"`) and `edition = "2
 |---|---|
 | `main.rs` | Thin binary entry point: declares the `mimalloc` global allocator, parses args, warns on thread oversubscription, resets `SIGPIPE`, calls `minifind::run()` with `\|\| io::stdout().lock()` |
 | `lib.rs` | `run()` — wires everything together: register signals → build glob/regex sets → build channel + walker → spawn output thread → run walker → join. Also defines `BatchSender` (per-thread batched channel send, flush-on-`Drop`). Re-exports all modules as `pub` |
-| `args.rs` | Clap `Parser` struct; validates thread count, normalizes input paths via `normpath`, exposes `oversubscription_warning()` |
+| `args.rs` | `lexopt`-based parser (`parse_inner` core + `Args::parse()` wrapper); validates thread count, normalizes input paths via `normpath`, exposes `oversubscription_warning()` |
 | `walk.rs` | The custom parallel walker: `walk_parallel()` drives a `crossbeam-deque` work-stealing engine (atomic-counter termination) over `Args`, emitting `Entry { path, file_type }` through a per-thread visitor; handles `max_depth`, `one_filesystem`, `follow_symlinks` + symlink-loop detection, and multi-root |
 | `walk/unix.rs` | `#[cfg(unix)]` leaf I/O: `rustix` `getdents`/`openat`/`fstat`/`statat`; maps `d_type` to `EntryType`, lstat fallback for `DT_UNKNOWN` |
 | `walk/fallback.rs` | `#[cfg(not(unix))]` leaf I/O via `std::fs`; `dev=0` (so `--one-filesystem` is a no-op) and `ino`=canonical-path hash for loop detection |
@@ -49,7 +49,7 @@ The minimum supported Rust version (`rust-version = "1.85.1"`) and `edition = "2
 ### Key design decisions
 
 - **`mimalloc`** is the global allocator (`#[global_allocator]`) for improved allocation throughput.
-- **`--name` and `--regex` are mutually exclusive** (`conflicts_with` in Clap); `--name` matches only the filename component while `--regex` matches the full path.
+- **`--name` and `--regex` are mutually exclusive** (enforced after the `lexopt` parse loop); `--name` matches only the filename component while `--regex` matches the full path. The three former clap `ArgAction::Set` bool options (`--follow-symlinks`, `--one-filesystem`, `--case-insensitive`) are now bare flags; `--one-filesystem` defaults on and is cleared via `--no-one-filesystem`/`--cross-filesystem`.
 - The walker is minifind's own (no `ignore` dependency): a `crossbeam-deque` work-stealing engine in `walk.rs` over a `cfg`-split leaf (`rustix` `getdents` on Unix, `std::fs` elsewhere). `ignore` remains only as a dev-dependency for the `benches/filetype.rs` comparison.
 - Entry type comes from the directory `d_type` (no per-entry `stat`); `filetype.rs` classifies on the platform-agnostic `EntryType` enum. Device/pipe/socket types are only distinguished on Unix (the `std::fs` fallback collapses non-dir/non-symlink to `File`).
 - Platform path output: Unix writes raw `OsStr` bytes (`OsStrExt::as_bytes`); non-Unix uses `Path::to_string_lossy().as_bytes()`. The same split lives in `regex::path_to_bytes`, which returns a `Cow<[u8]>` (borrowed on Unix, owned-on-lossy elsewhere) for full-path regex matching.

@@ -14,6 +14,9 @@ Cargo.lock
 # Cached Linux kernel checkout used by benches/walk.rs
 benches/linux_root/
 
+# Local planning/design artifacts (superpowers specs & plans)
+docs/
+
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 

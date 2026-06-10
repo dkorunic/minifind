@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 use anyhow::Error;
-use clap::Parser;
 use mimalloc::MiMalloc;
 use std::io;
 use std::thread;

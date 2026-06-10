@@ -34,12 +34,12 @@ pub struct FileType {
 
 impl FileType {
     /// Builds the type mask from the parsed `--type` selectors.
-    pub fn new(clap_filetype: &[crate::args::FileType]) -> Self {
+    pub fn new(selectors: &[crate::args::FileType]) -> Self {
         use crate::args::FileType as A;
         let mut selected = 0u8;
         let mut empty = false;
 
-        for v in clap_filetype {
+        for v in selectors {
             match v {
                 A::Empty => empty = true,
                 A::BlockDevice => selected |= FT_BLOCK_DEVICE,

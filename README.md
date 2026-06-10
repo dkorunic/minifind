@@ -41,20 +41,22 @@ minimal find reimplementation
 Usage: minifind [OPTIONS] <PATH>...
 
 Arguments:
-  <PATH>...  Paths to check for large directories
+  <PATH>...  Paths to traverse (must be existing directories)
 
 Options:
-  -f, --follow-symlinks <FOLLOW_SYMLINKS>    Follow symlinks [default: false] [aliases: -L] [possible values: true, false]
-  -o, --one-filesystem <ONE_FILESYSTEM>      Do not cross mount points [default: true] [aliases: --xdev] [possible values: true, false]
-  -x, --threads <THREADS>                    Number of threads to use when calibrating and scanning [default: 20]
-  -d, --max-depth <MAX_DEPTH>                Maximum depth to traverse
-  -n, --name <NAME>                          Base of the file name matching globbing pattern
-  -r, --regex <REGEX>                        File name (full path) matching regular expression pattern
-  -i, --case-insensitive <CASE_INSENSITIVE>  Case-insensitive matching for globbing and regular expression patterns [default: false] [possible values: true, false]
-  -t, --file-type <FILE_TYPE>                Filter matches by type. Also accepts 'b', 'c', 'd', 'p', 'f', 'l', 's' and 'e' aliases [default: directory file symlink]
-                                             [possible values: empty, block-device, char-device, directory, pipe, file, symlink, socket]
-  -h, --help                                 Print help
-  -V, --version                              Print version
+  -f, --follow-symlinks    Follow symlinks [alias: -L]
+  -o, --one-filesystem     Do not cross mount points (default) [alias: --xdev]
+      --no-one-filesystem  Cross mount points [alias: --cross-filesystem]
+  -x, --threads <N>        Number of worker threads [default: logical CPU count]
+  -d, --max-depth <N>      Maximum depth to traverse
+  -n, --name <GLOB>        File-name globbing pattern (repeatable; conflicts with --regex)
+  -r, --regex <RE>         Full-path regular expression (repeatable; conflicts with --name)
+  -i, --case-insensitive   Case-insensitive glob/regex matching
+  -t, --file-type <TYPE>   Filter matches by type (repeatable) [default: directory file symlink]
+                           values: empty, block-device, char-device, directory, pipe, file, socket, symlink
+                           aliases: e, b, c, d, p, f, s, l
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 ### Regular expressions
