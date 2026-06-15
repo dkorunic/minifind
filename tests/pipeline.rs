@@ -39,6 +39,7 @@ fn base_args(paths: Vec<PathBuf>, file_type: Vec<FileType>) -> Args {
         follow_symlinks: false,
         one_filesystem: true,
         max_depth: None,
+        max_iops: None,
         name: None,
         regex: None,
         case_insensitive: false,
@@ -229,4 +230,21 @@ fn duplicate_paths_are_emitted_once() {
         count, 1,
         "once.txt must appear exactly once when the same path is given twice"
     );
+}
+
+#[test]
+fn output_unchanged_under_iops_limit() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir(tmp.path().join("sub")).unwrap();
+    std::fs::write(tmp.path().join("sub/a.txt"), b"x").unwrap();
+    std::fs::write(tmp.path().join("b.txt"), b"x").unwrap();
+
+    let mut args =
+        base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
+    let baseline = run_capture(&args);
+
+    args.max_iops = Some(100_000);
+    let limited = run_capture(&args);
+
+    assert_eq!(baseline, limited);
 }

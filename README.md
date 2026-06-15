@@ -49,6 +49,7 @@ Options:
       --no-one-filesystem  Cross mount points [alias: --cross-filesystem]
   -x, --threads <N>        Number of worker threads [default: logical CPU count]
   -d, --max-depth <N>      Maximum depth to traverse
+      --max-iops <N>       Max directories visited per second (0 = unlimited)
   -n, --name <GLOB>        File-name globbing pattern (repeatable; conflicts with --regex)
   -r, --regex <RE>         Full-path regular expression (repeatable; conflicts with --name)
   -i, --case-insensitive   Case-insensitive glob/regex matching

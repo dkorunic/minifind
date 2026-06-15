@@ -45,6 +45,7 @@ The minimum supported Rust version (`rust-version = "1.85.1"`) and `edition = "2
 | `glob.rs` | `build_glob_set()` — builds a `globset::GlobSet`; matching happens in the output thread against `file_name()` only |
 | `regex.rs` | `build_regex_set()` — builds a `regex::bytes::RegexSet`; matching happens in the output thread against the full path as bytes |
 | `interrupt.rs` | Registers Unix/Windows signals via `signal-hook`; sets an `Arc<AtomicBool>` flag checked in the walker closure |
+| `ratelimit.rs` | `Limiter` wrapping `governor` — a synchronous, shutdown-aware token bucket (`acquire` loops `check()` + capped sleep); throttles one token per directory in `walk::descend` |
 
 ### Key design decisions
 
@@ -55,6 +56,7 @@ The minimum supported Rust version (`rust-version = "1.85.1"`) and `edition = "2
 - Platform path output: Unix writes raw `OsStr` bytes (`OsStrExt::as_bytes`); non-Unix uses `Path::to_string_lossy().as_bytes()`. The same split lives in `regex::path_to_bytes`, which returns a `Cow<[u8]>` (borrowed on Unix, owned-on-lossy elsewhere) for full-path regex matching.
 - Channel buffer size is `CHAN_MULT * (threads - 1)` **batches** (`CHAN_MULT` = 4, each up to `BATCH_SIZE` = 256 entries); entries cross the channel in batches, not individually, to cut synchronization overhead. Both constants were tuned by sweeping a warm Linux-kernel tree (throughput is flat across `CHAN_MULT` 2–16; batch size flattens by ~256).
 - The `--empty` (`-t e`) type implicitly enables both file and directory matching unless another type flag is also set.
+- **`--max-iops <N>`** caps directories visited per second globally across walker threads via `ratelimit::Limiter` (a `governor` token bucket); the single throttle point is in `walk::descend` before `open_dir`, so each directory read spends one token. `None`/`0` means unlimited (no limiter is built, so the hot path is unchanged). A throttled worker rechecks the walker's abort flag in ≤100 ms chunks rather than blocking on a full directory's I/O; since that flag is only set once a worker next reaches the visitor, the stop can lag by up to roughly one token interval (≈1 s at `--max-iops 1`).
 - `Cargo.toml` declares a `[lints.clippy]` table (`all = deny`, `redundant_clone = deny`), so these are enforced on every `cargo clippy`/`build`, not just via CLI flags.
 
 ### Testing

@@ -23,6 +23,7 @@ use anyhow::Error;
 use crossbeam_channel::{bounded, Sender};
 use itertools::Itertools;
 use std::io::{BufWriter, Write};
+use std::num::NonZeroU32;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -34,10 +35,12 @@ pub mod args;
 pub mod filetype;
 pub mod glob;
 pub mod interrupt;
+pub mod ratelimit;
 pub mod regex;
 pub mod walk;
 
 use args::Args;
+use ratelimit::Limiter;
 use walk::{Entry, WalkState};
 
 /// Entries per channel message; batching amortizes the per-send atomic
@@ -157,7 +160,10 @@ where
         args.path.iter().map(PathBuf::as_path).unique().collect();
     let filetype_proto = filetype::FileType::new(&args.file_type);
 
-    walk::walk_parallel(args, &unique_paths, || {
+    // None or 0 IOPS => no limiter (unlimited); otherwise cap directory visits
+    let limiter = args.max_iops.and_then(NonZeroU32::new).map(Limiter::new);
+
+    walk::walk_parallel(args, &unique_paths, limiter.as_ref(), || {
         let filetype = filetype_proto;
         let shutdown = Arc::clone(&shutdown);
         let mut batch = BatchSender::new(tx.clone());

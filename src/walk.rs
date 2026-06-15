@@ -6,6 +6,7 @@
 
 use crate::args::Args;
 use crate::filetype::EntryType;
+use crate::ratelimit::Limiter;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use crossbeam_utils::Backoff;
 use std::ffi::OsStr;
@@ -52,10 +53,23 @@ struct Task {
     ancestors: Option<Arc<Vec<(u64, u64)>>>,
 }
 
+/// Immutable shared state for one `walk_parallel` run, bundled so the
+/// recursive worker functions keep small signatures.
+struct WalkCtx<'a> {
+    args: &'a Args,
+    pending: &'a AtomicUsize,
+    quit: &'a AtomicBool,
+    limiter: Option<&'a Limiter>,
+}
+
 /// Walks `roots` in parallel, invoking a fresh per-thread visitor (from
 /// `make_visitor`) for every entry. Directory read/open errors are skipped.
-pub fn walk_parallel<F, V>(args: &Args, roots: &[&Path], make_visitor: F)
-where
+pub fn walk_parallel<F, V>(
+    args: &Args,
+    roots: &[&Path],
+    limiter: Option<&Limiter>,
+    make_visitor: F,
+) where
     F: Fn() -> V + Sync,
     V: FnMut(Entry) -> WalkState + Send,
 {
@@ -88,51 +102,42 @@ where
     let stealers: Vec<Stealer<Task>> =
         workers.iter().map(Worker::stealer).collect();
 
+    let ctx = WalkCtx { args, pending: &pending, quit: &quit, limiter };
+
     thread::scope(|scope| {
         for worker in workers {
+            let ctx = &ctx;
             let injector = &injector;
             let stealers = &stealers;
-            let pending = &pending;
-            let quit = &quit;
             let make_visitor = &make_visitor;
             scope.spawn(move || {
                 let mut visitor = make_visitor();
-                run_worker(
-                    args,
-                    &worker,
-                    injector,
-                    stealers,
-                    pending,
-                    quit,
-                    &mut visitor,
-                );
+                run_worker(ctx, &worker, injector, stealers, &mut visitor);
             });
         }
     });
 }
 
 fn run_worker<V: FnMut(Entry) -> WalkState>(
-    args: &Args,
+    ctx: &WalkCtx,
     local: &Worker<Task>,
     injector: &Injector<Task>,
     stealers: &[Stealer<Task>],
-    pending: &AtomicUsize,
-    quit: &AtomicBool,
     visitor: &mut V,
 ) {
     let backoff = Backoff::new();
     loop {
-        if quit.load(Ordering::Relaxed) {
+        if ctx.quit.load(Ordering::Relaxed) {
             return;
         }
         match find_task(local, injector, stealers) {
             Some(task) => {
                 backoff.reset();
-                process(args, task, local, pending, quit, visitor);
-                pending.fetch_sub(1, Ordering::SeqCst);
+                process(ctx, task, local, visitor);
+                ctx.pending.fetch_sub(1, Ordering::SeqCst);
             }
             None => {
-                if pending.load(Ordering::SeqCst) == 0 {
+                if ctx.pending.load(Ordering::SeqCst) == 0 {
                     return;
                 }
                 backoff.snooze();
@@ -158,37 +163,37 @@ fn find_task(
 }
 
 fn process<V: FnMut(Entry) -> WalkState>(
-    args: &Args,
+    ctx: &WalkCtx,
     task: Task,
     local: &Worker<Task>,
-    pending: &AtomicUsize,
-    quit: &AtomicBool,
     visitor: &mut V,
 ) {
     if let WalkState::Quit =
         visitor(Entry { path: task.path.clone(), file_type: task.file_type })
     {
-        quit.store(true, Ordering::Relaxed);
+        ctx.quit.store(true, Ordering::Relaxed);
         return;
     }
-    descend(args, &task, local, pending);
+    descend(ctx, &task, local);
 }
 
-fn descend(
-    args: &Args,
-    task: &Task,
-    local: &Worker<Task>,
-    pending: &AtomicUsize,
-) {
+fn descend(ctx: &WalkCtx, task: &Task, local: &Worker<Task>) {
     let follow = match task.file_type {
         // depth 0 is a command-line root: follow it even if it is a
         // symlink-to-dir (like find(1)); deeper real dirs use O_NOFOLLOW.
         EntryType::Dir => task.depth == 0,
-        EntryType::Symlink if args.follow_symlinks => true,
+        EntryType::Symlink if ctx.args.follow_symlinks => true,
         _ => return,
     };
-    if let Some(max) = args.max_depth {
+    if let Some(max) = ctx.args.max_depth {
         if task.depth >= max {
+            return;
+        }
+    }
+
+    // throttle one token per directory visited; abort on shutdown
+    if let Some(limiter) = ctx.limiter {
+        if !limiter.acquire(ctx.quit) {
             return;
         }
     }
@@ -199,7 +204,7 @@ fn descend(
     let Ok((dev, ino)) = platform::dir_id(&dir) else {
         return;
     };
-    if args.one_filesystem && dev != task.root_dev {
+    if ctx.args.one_filesystem && dev != task.root_dev {
         return;
     }
     if let Some(anc) = &task.ancestors {
@@ -223,7 +228,7 @@ fn descend(
                 Err(_) => return,
             },
         };
-        pending.fetch_add(1, Ordering::SeqCst);
+        ctx.pending.fetch_add(1, Ordering::SeqCst);
         local.push(Task {
             path,
             file_type,
@@ -247,6 +252,7 @@ mod tests {
             follow_symlinks: false,
             one_filesystem: true,
             max_depth: None,
+            max_iops: None,
             name: None,
             regex: None,
             case_insensitive: false,
@@ -256,7 +262,7 @@ mod tests {
 
     fn collect(args: &Args, roots: &[&Path]) -> Vec<PathBuf> {
         let sink = Mutex::new(Vec::new());
-        walk_parallel(args, roots, || {
+        walk_parallel(args, roots, None, || {
             |e: Entry| {
                 sink.lock().unwrap().push(e.path);
                 WalkState::Continue
@@ -362,7 +368,7 @@ mod tests {
         roots: &[&Path],
     ) -> Vec<(PathBuf, EntryType)> {
         let sink = Mutex::new(Vec::new());
-        walk_parallel(args, roots, || {
+        walk_parallel(args, roots, None, || {
             |e: Entry| {
                 sink.lock().unwrap().push((e.path, e.file_type));
                 WalkState::Continue
@@ -495,5 +501,32 @@ mod tests {
         let broken = got.iter().find(|(p, _)| p.ends_with("broken"));
         assert!(broken.is_some(), "broken symlink must still be emitted");
         assert_eq!(broken.unwrap().1, EntryType::Symlink);
+    }
+
+    #[test]
+    fn limiter_does_not_change_entry_set() {
+        use crate::ratelimit::Limiter;
+        use std::num::NonZeroU32;
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("a")).unwrap();
+        std::fs::write(tmp.path().join("a/f.txt"), b"x").unwrap();
+        std::fs::write(tmp.path().join("g.txt"), b"x").unwrap();
+
+        let mut expected = collect(&base_args(4), &[tmp.path()]);
+        expected.sort();
+
+        // high rate: burst covers the tree, so no real sleeping occurs
+        let limiter = Limiter::new(NonZeroU32::new(100_000).unwrap());
+        let sink = Mutex::new(Vec::new());
+        walk_parallel(&base_args(4), &[tmp.path()], Some(&limiter), || {
+            |e: Entry| {
+                sink.lock().unwrap().push(e.path);
+                WalkState::Continue
+            }
+        });
+        let mut got = sink.into_inner().unwrap();
+        got.sort();
+
+        assert_eq!(got, expected);
     }
 }
