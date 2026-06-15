@@ -160,8 +160,9 @@ where
         args.path.iter().map(PathBuf::as_path).unique().collect();
     let filetype_proto = filetype::FileType::new(&args.file_type);
 
-    // None or 0 IOPS => no limiter (unlimited); otherwise cap directory visits
-    let limiter = args.max_iops.and_then(NonZeroU32::new).map(Limiter::new);
+    // None or 0 => no limiter (unlimited); otherwise cap directory scan rate
+    let limiter =
+        args.max_scan_rate.and_then(NonZeroU32::new).map(Limiter::new);
 
     walk::walk_parallel(args, &unique_paths, limiter.as_ref(), || {
         let filetype = filetype_proto;

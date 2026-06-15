@@ -252,7 +252,7 @@ mod tests {
             follow_symlinks: false,
             one_filesystem: true,
             max_depth: None,
-            max_iops: None,
+            max_scan_rate: None,
             name: None,
             regex: None,
             case_insensitive: false,

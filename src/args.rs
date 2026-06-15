@@ -24,9 +24,9 @@ pub struct Args {
     /// Maximum depth to traverse (`-d`/`--max-depth`).
     pub max_depth: Option<usize>,
 
-    /// Max directories visited per second (`--max-iops`); `None`/`0` =
-    /// unlimited.
-    pub max_iops: Option<u32>,
+    /// Max directories scanned per second (`-s`/`--max-scan-rate`);
+    /// `None`/`0` = unlimited.
+    pub max_scan_rate: Option<u32>,
 
     /// Base of the file name matching globbing pattern (`-n`/`--name`).
     pub name: Option<Vec<String>>,
@@ -80,7 +80,7 @@ Options:
       --no-one-filesystem  Cross mount points [alias: --cross-filesystem]
   -x, --threads <N>        Number of worker threads [default: logical CPU count]
   -d, --max-depth <N>      Maximum depth to traverse
-      --max-iops <N>       Max directories visited per second (0 = unlimited)
+  -s, --max-scan-rate <N>  Max directories scanned per second (0 = unlimited)
   -n, --name <GLOB>        File-name globbing pattern (repeatable; conflicts with --regex)
   -r, --regex <RE>         Full-path regular expression (repeatable; conflicts with --name)
   -i, --case-insensitive   Case-insensitive glob/regex matching
@@ -136,7 +136,7 @@ where
     let mut one_filesystem = true;
     let mut threads = default_threads();
     let mut max_depth = None;
-    let mut max_iops = None;
+    let mut max_scan_rate = None;
     let mut name: Vec<String> = Vec::new();
     let mut regex: Vec<String> = Vec::new();
     let mut case_insensitive = false;
@@ -162,8 +162,8 @@ where
             Short('d') | Long("max-depth") => {
                 max_depth = Some(parser.value()?.parse()?);
             }
-            Long("max-iops") => {
-                max_iops = Some(parser.value()?.parse()?);
+            Short('s') | Long("max-scan-rate") => {
+                max_scan_rate = Some(parser.value()?.parse()?);
             }
             Short('n') | Long("name") => {
                 name.push(parser.value()?.string()?);
@@ -204,7 +204,7 @@ where
         one_filesystem,
         threads,
         max_depth,
-        max_iops,
+        max_scan_rate,
         name: (!name.is_empty()).then_some(name),
         regex: (!regex.is_empty()).then_some(regex),
         case_insensitive,
@@ -308,7 +308,7 @@ mod tests {
         assert!(a.one_filesystem);
         assert!(!a.case_insensitive);
         assert_eq!(a.max_depth, None);
-        assert_eq!(a.max_iops, None);
+        assert_eq!(a.max_scan_rate, None);
         assert_eq!(a.name, None);
         assert_eq!(a.regex, None);
         assert_eq!(
@@ -521,22 +521,34 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_inner_max_iops_value() {
+    fn test_parse_inner_max_scan_rate_value() {
         let dir = tmp_dir();
-        assert_eq!(run(&["--max-iops", "50", &dir]).max_iops, Some(50));
+        assert_eq!(
+            run(&["--max-scan-rate", "50", &dir]).max_scan_rate,
+            Some(50)
+        );
     }
 
     #[test]
-    fn test_parse_inner_max_iops_zero_parses() {
+    fn test_parse_inner_max_scan_rate_short() {
+        let dir = tmp_dir();
+        assert_eq!(run(&["-s", "50", &dir]).max_scan_rate, Some(50));
+    }
+
+    #[test]
+    fn test_parse_inner_max_scan_rate_zero_parses() {
         // 0 is accepted at parse time; run() treats it as unlimited
         let dir = tmp_dir();
-        assert_eq!(run(&["--max-iops", "0", &dir]).max_iops, Some(0));
+        assert_eq!(
+            run(&["--max-scan-rate", "0", &dir]).max_scan_rate,
+            Some(0)
+        );
     }
 
     #[test]
-    fn test_parse_inner_max_iops_non_numeric_errors() {
+    fn test_parse_inner_max_scan_rate_non_numeric_errors() {
         let dir = tmp_dir();
-        assert!(parse_argv(&["--max-iops", "abc", &dir]).is_err());
+        assert!(parse_argv(&["--max-scan-rate", "abc", &dir]).is_err());
     }
 
     // A4 — parse_paths normalises away ".." components
