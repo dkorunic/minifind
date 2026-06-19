@@ -99,18 +99,18 @@ The `--name` option uses Unix-style [glob syntax](https://docs.rs/globset/latest
 Hardware: 4-core / 8-thread Intel Xeon E5-1630 v3 @ 3.70 GHz, 48 GB RAM.
 
 Measured with the Criterion benchmark in [`benches/walk.rs`](benches/walk.rs)
-over a shallow clone of the mainline Linux kernel tree (99,893 entries across
-6,158 directories, ~2 GB) with a warm page cache. Both `minifind` (defaults)
+over a shallow clone of the mainline Linux kernel tree (100,871 entries across
+6,201 directories, ~2.1 GB) with a warm page cache. Both `minifind` (defaults)
 and GNU `find` run as subprocesses, so each pays process-startup cost; output
 is discarded for both. 100 samples each:
 
 ```text
-walk_linux_kernel/minifind   time: [20.630 ms 20.710 ms 20.797 ms]
-walk_linux_kernel/find       time: [78.989 ms 79.237 ms 79.497 ms]
+walk_linux_kernel/minifind   time: [27.700 ms 27.771 ms 27.849 ms]
+walk_linux_kernel/find       time: [94.802 ms 95.441 ms 96.114 ms]
 ```
 
-So `minifind` walks the tree in **~20.7 ms vs ~79.2 ms — about 3.8× faster**
-(≈4.8M vs ≈1.3M entries/second). Reproduce with `cargo bench --bench walk`
+So `minifind` walks the tree in **~27.8 ms vs ~95.4 ms — about 3.4× faster**
+(≈3.6M vs ≈1.1M entries/second). Reproduce with `cargo bench --bench walk`
 (set `BENCH_WALK_DIR=/path/to/tree` to benchmark an existing checkout).
 
 ### Why it is faster
