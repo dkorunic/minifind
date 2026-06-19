@@ -105,12 +105,12 @@ and GNU `find` run as subprocesses, so each pays process-startup cost; output
 is discarded for both. 100 samples each:
 
 ```text
-walk_linux_kernel/minifind   time: [27.700 ms 27.771 ms 27.849 ms]
-walk_linux_kernel/find       time: [94.802 ms 95.441 ms 96.114 ms]
+walk_linux_kernel/minifind   time: [26.634 ms 26.702 ms 26.779 ms]
+walk_linux_kernel/find       time: [92.463 ms 92.998 ms 93.565 ms]
 ```
 
-So `minifind` walks the tree in **~27.8 ms vs ~95.4 ms — about 3.4× faster**
-(≈3.6M vs ≈1.1M entries/second). Reproduce with `cargo bench --bench walk`
+So `minifind` walks the tree in **~26.7 ms vs ~93.0 ms — about 3.5× faster**
+(≈3.8M vs ≈1.1M entries/second). Reproduce with `cargo bench --bench walk`
 (set `BENCH_WALK_DIR=/path/to/tree` to benchmark an existing checkout).
 
 ### Why it is faster
