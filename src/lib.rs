@@ -35,6 +35,7 @@ pub mod args;
 pub mod filetype;
 pub mod glob;
 pub mod interrupt;
+pub mod meta;
 pub mod ratelimit;
 pub mod regex;
 pub mod walk;
@@ -122,24 +123,32 @@ where
         regex::build_regex_set(args.regex.as_deref(), args.case_insensitive)?;
     let regex_enabled = args.regex.is_some();
 
+    // built here so a bad glob errors before the walk; applied in the walker
+    // (where a matched dir can be pruned)
+    let exclude_set =
+        glob::build_glob_set(args.exclude.as_deref(), args.case_insensitive)?;
+    let exclude = args.exclude.is_some().then_some(&exclude_set);
+
+    let predicates = &args.meta;
+    let meta_active = predicates.is_active();
+    let meta_mask = predicates.mask();
+    let now = meta::now_secs();
+
     let (tx, rx) = bounded::<Vec<Entry>>(CHAN_MULT * (args.threads - 1));
 
+    // NUL for --null (xargs -0 / find -print0), else newline
+    let separator: u8 = if args.null { b'\0' } else { b'\n' };
+
+    // result cap (None/0 = unlimited); the sole writer enforces it
+    let max_results = args.max_results.filter(|&n| n > 0);
+
     let print_thread = thread::spawn(move || {
-        // write straight into the BufWriter (it coalesces) — no scratch copy
+        // the BufWriter coalesces, so write paths in directly (no scratch)
         let mut stdout = BufWriter::with_capacity(256 * 1024, make_out());
+        let mut written: usize = 0;
 
-        for batch in rx {
+        'outer: for batch in rx {
             for entry in batch {
-                if glob_enabled && !glob_name.is_match(entry.file_name()) {
-                    continue;
-                }
-                // regex matches the full path, glob only the file name
-                if regex_enabled
-                    && !regex_name.is_match(&regex::path_to_bytes(&entry.path))
-                {
-                    continue;
-                }
-
                 #[cfg(unix)]
                 stdout
                     .write_all(entry.path.as_os_str().as_bytes())
@@ -148,43 +157,115 @@ where
                 stdout
                     .write_all(entry.path.to_string_lossy().as_bytes())
                     .unwrap_or(());
-                stdout.write_all(b"\n").unwrap_or(());
+                stdout.write_all(&[separator]).unwrap_or(());
+
+                // dropping `rx` on the Nth result closes the channel; the
+                // walkers observe that as WalkState::Quit
+                written += 1;
+                if max_results.is_some_and(|n| written >= n) {
+                    break 'outer;
+                }
             }
         }
 
         stdout.flush().unwrap_or(());
     });
 
-    // dedup roots (borrowed, no clone)
+    // dedup roots
     let unique_paths: Vec<&Path> =
         args.path.iter().map(PathBuf::as_path).unique().collect();
     let filetype_proto = filetype::FileType::new(&args.file_type);
 
-    // None or 0 => no limiter (unlimited); otherwise cap directory scan rate
+    // root = depth 0; gated in the visitor so shallower levels still descend
+    let min_depth = args.min_depth.unwrap_or(0);
+
+    // None/0 → unlimited (no limiter built, hot path unchanged)
     let limiter =
         args.max_scan_rate.and_then(NonZeroU32::new).map(Limiter::new);
 
-    walk::walk_parallel(args, &unique_paths, limiter.as_ref(), || {
-        let filetype = filetype_proto;
-        let shutdown = Arc::clone(&shutdown);
-        let mut batch = BatchSender::new(tx.clone());
-        move |entry: Entry| {
-            if shutdown.load(Ordering::Relaxed) {
-                return WalkState::Quit;
+    // Every per-entry filter runs in the walker threads, cheapest first, so
+    // statx is reached only after type/name/regex have kept the entry.
+    walk::walk_parallel(
+        args,
+        &unique_paths,
+        limiter.as_ref(),
+        exclude,
+        || {
+            let filetype = filetype_proto;
+            let shutdown = Arc::clone(&shutdown);
+            // reborrow so the move-visitor captures `&GlobSet`, not copies
+            let glob_name = &glob_name;
+            let regex_name = &regex_name;
+            let mut batch = BatchSender::new(tx.clone());
+            move |entry: Entry, stat: &walk::StatAt| {
+                if shutdown.load(Ordering::Relaxed) {
+                    return WalkState::Quit;
+                }
+                // --min-depth: suppress shallow entries (descent continues).
+                if entry.depth < min_depth {
+                    return WalkState::Continue;
+                }
+                if filetype.ignore_filetype(entry.file_type, &entry.path) {
+                    return WalkState::Continue;
+                }
+                if glob_enabled && !glob_name.is_match(entry.file_name()) {
+                    return WalkState::Continue;
+                }
+                // regex matches the full path; glob only the file name
+                if regex_enabled
+                    && !regex_name.is_match(&regex::path_to_bytes(&entry.path))
+                {
+                    return WalkState::Continue;
+                }
+                // stat last (lazy); unstattable entries are skipped, like find
+                if meta_active {
+                    match stat.fetch(meta_mask) {
+                        Ok(m) if predicates.matches(&m, now) => {}
+                        _ => return WalkState::Continue,
+                    }
+                }
+                // stop walking once the output channel closes
+                if !batch.push(entry) {
+                    return WalkState::Quit;
+                }
+                WalkState::Continue
             }
-            if filetype.ignore_filetype(entry.file_type, &entry.path) {
-                return WalkState::Continue;
-            }
-            // stop walking once the output channel closes
-            if !batch.push(entry) {
-                return WalkState::Quit;
-            }
-            WalkState::Continue
-        }
-    });
+        },
+    );
 
     drop(tx);
     print_thread.join().unwrap();
 
     Ok(())
+}
+
+/// Raises the soft `RLIMIT_NOFILE` to the hard limit, giving the walker
+/// headroom for its pinned-parent-fd frontier (≈ O(workers × depth)), as
+/// `find`/`fd` do. Best-effort; returns the resulting soft limit (`None` =
+/// unlimited).
+#[cfg(unix)]
+pub fn raise_nofile_limit() -> Option<u64> {
+    use rustix::process::{getrlimit, setrlimit, Resource};
+    let mut lim = getrlimit(Resource::Nofile);
+    if lim.current != lim.maximum {
+        lim.current = lim.maximum;
+        let _ = setrlimit(Resource::Nofile, lim);
+    }
+    getrlimit(Resource::Nofile).current
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn raise_nofile_limit_never_lowers_soft() {
+        use rustix::process::{getrlimit, Resource};
+        let before = getrlimit(Resource::Nofile).current;
+        let after = super::raise_nofile_limit();
+        // soft limit must never decrease; None means unlimited (either it was
+        // already, or we raised it there) — both acceptable.
+        if let (Some(b), Some(a)) = (before, after) {
+            assert!(a >= b, "soft limit dropped: {a} < {b}");
+        }
+    }
 }

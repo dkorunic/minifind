@@ -26,6 +26,10 @@ fn main() -> Result<(), Error> {
 
     minifind::interrupt::reset_sigpipe();
 
+    // give the fd-anchored walker headroom for its pinned-parent-fd frontier
+    #[cfg(unix)]
+    let _ = minifind::raise_nofile_limit();
+
     // defer locking stdout to the output thread (StdoutLock is not Send)
     minifind::run(&args, || io::stdout().lock())
 }

@@ -27,7 +27,7 @@ crossbeam-channel = "0.5.15"
 crossbeam-deque = "0.8"
 crossbeam-utils = "0.8"
 governor = { version = "0.10", default-features = false, features = ["std", "quanta"] }
-rustix = { version = "1.1.4", features = ["fs"] }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
 libc = "0.2.186"
 globset = "0.4.18"
 regex = "1.12.4"

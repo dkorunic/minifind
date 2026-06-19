@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
 // SPDX-License-Identifier: MIT
 
+use crate::meta;
 use anyhow::{anyhow, Error};
 use lexopt::prelude::*;
 use normpath::PathExt;
@@ -24,9 +25,18 @@ pub struct Args {
     /// Maximum depth to traverse (`-d`/`--max-depth`).
     pub max_depth: Option<usize>,
 
+    /// Minimum depth to emit (`--min-depth`/`-mindepth`); shallower entries
+    /// are suppressed but still descended through. Root is depth 0.
+    pub min_depth: Option<usize>,
+
     /// Max directories scanned per second (`-s`/`--max-scan-rate`);
     /// `None`/`0` = unlimited.
     pub max_scan_rate: Option<u32>,
+
+    /// Stop after emitting this many results (`--max-results`); `None`/`0` =
+    /// unlimited. Enforced in the output thread; the walk halts early once the
+    /// output channel closes.
+    pub max_results: Option<usize>,
 
     /// Base of the file name matching globbing pattern (`-n`/`--name`).
     pub name: Option<Vec<String>>,
@@ -39,6 +49,18 @@ pub struct Args {
 
     /// Filter matches by type (`-t`/`--file-type`).
     pub file_type: Vec<FileType>,
+
+    /// Metadata predicates requiring a `stat` (`-size`/`-mtime`/`-perm`/…),
+    /// parsed (and `-user`/`-group` resolved to ids) at arg-parse time.
+    pub meta: meta::Predicates,
+
+    /// Glob patterns whose matching entries (by file name) are excluded
+    /// (`-E`/`--exclude`); a matched directory is pruned (not descended).
+    pub exclude: Option<Vec<String>>,
+
+    /// Terminate each printed path with a NUL byte instead of a newline
+    /// (`-0`/`--null`/`-print0`); for piping into `xargs -0` and friends.
+    pub null: bool,
 
     /// Paths to traverse (positional; at least one required).
     pub path: Vec<PathBuf>,
@@ -63,7 +85,8 @@ pub enum FileType {
 pub enum Outcome {
     Help,
     Version,
-    Run(Args),
+    // boxed: `Args` is much larger than the unit variants
+    Run(Box<Args>),
 }
 
 const HELP: &str = "\
@@ -75,18 +98,29 @@ Arguments:
   <PATH>...  Paths to traverse (must be existing directories)
 
 Options:
-  -f, --follow-symlinks    Follow symlinks [alias: -L]
-  -o, --one-filesystem     Do not cross mount points (default) [alias: --xdev]
+  -f, --follow-symlinks    Follow symlinks [aliases: -L, -follow]
+  -o, --one-filesystem     Do not cross mount points (default) [aliases: --xdev, -xdev, -mount]
       --no-one-filesystem  Cross mount points [alias: --cross-filesystem]
   -x, --threads <N>        Number of worker threads [default: logical CPU count]
-  -d, --max-depth <N>      Maximum depth to traverse
+  -d, --max-depth <N>      Maximum depth to traverse [alias: -maxdepth]
+      --min-depth <N>      Minimum depth to emit (shallower entries are skipped) [alias: -mindepth]
   -s, --max-scan-rate <N>  Max directories scanned per second (0 = unlimited)
-  -n, --name <GLOB>        File-name globbing pattern (repeatable; conflicts with --regex)
-  -r, --regex <RE>         Full-path regular expression (repeatable; conflicts with --name)
+      --max-results <N>    Stop after the first N results (0 = unlimited)
+  -n, --name <GLOB>        File-name globbing pattern (repeatable; conflicts with --regex) [aliases: -name; -iname adds -i]
+  -r, --regex <RE>         Full-path regular expression (repeatable; conflicts with --name) [aliases: -regex; -iregex adds -i]
   -i, --case-insensitive   Case-insensitive glob/regex matching
-  -t, --file-type <TYPE>   Filter matches by type (repeatable) [default: directory file symlink]
+  -E, --exclude <GLOB>     Exclude entries whose name matches GLOB; matched directories are pruned (repeatable)
+  -0, --null               Terminate each path with NUL instead of newline [aliases: -print0, --print0]
+  -t, --file-type <TYPE>   Filter matches by type (repeatable) [default: directory file symlink] [alias: -type]
                            values: empty, block-device, char-device, directory, pipe, file, socket, symlink
                            aliases: e, b, c, d, p, f, s, l
+      --empty              Match empty files and directories (= --file-type empty) [alias: -empty]
+      --size <[+-]N(c|k|M|G|T)>  Filter by size; unit required (c=bytes, k/M/G/T = 1024-based); +N greater, -N less [alias: -size]
+      --mtime, --ctime, --atime <[+-]N>  Filter by modify/change/access time, in days [aliases: -mtime/-ctime/-atime]
+      --mmin, --cmin, --amin <[+-]N>     Filter by modify/change/access time, in minutes [aliases: -mmin/-cmin/-amin]
+      --perm <[/-]MODE>    Filter by permission bits, octal or symbolic; -MODE all set, /MODE any set, MODE exact [alias: -perm]
+      --uid, --gid <[+-]N> Filter by numeric owner/group id [aliases: -uid/-gid]
+      --user, --group <NAME>  Filter by owner/group name (or numeric id) [aliases: -user/-group]
   -h, --help               Print help
   -V, --version            Print version
 ";
@@ -97,7 +131,7 @@ impl Args {
     #[must_use]
     pub fn parse() -> Args {
         match parse_inner(std::env::args_os()) {
-            Ok(Outcome::Run(args)) => args,
+            Ok(Outcome::Run(args)) => *args,
             Ok(Outcome::Help) => {
                 print!("{HELP}");
                 std::process::exit(0);
@@ -130,17 +164,53 @@ where
     I: IntoIterator,
     I::Item: Into<std::ffi::OsString>,
 {
-    let mut parser = lexopt::Parser::from_iter(args);
+    // find spells these as single multi-char short tokens that lexopt would
+    // split into `-p -r -i …`; rewrite each to its `--long` form first.
+    let normalized = args.into_iter().map(|a| {
+        let os: std::ffi::OsString = a.into();
+        match os.to_str() {
+            Some("-print0") => std::ffi::OsString::from("--null"),
+            Some("-mindepth") => std::ffi::OsString::from("--min-depth"),
+            Some("-size") => std::ffi::OsString::from("--size"),
+            Some("-mtime") => std::ffi::OsString::from("--mtime"),
+            Some("-ctime") => std::ffi::OsString::from("--ctime"),
+            Some("-atime") => std::ffi::OsString::from("--atime"),
+            Some("-mmin") => std::ffi::OsString::from("--mmin"),
+            Some("-cmin") => std::ffi::OsString::from("--cmin"),
+            Some("-amin") => std::ffi::OsString::from("--amin"),
+            Some("-perm") => std::ffi::OsString::from("--perm"),
+            Some("-uid") => std::ffi::OsString::from("--uid"),
+            Some("-gid") => std::ffi::OsString::from("--gid"),
+            Some("-user") => std::ffi::OsString::from("--user"),
+            Some("-group") => std::ffi::OsString::from("--group"),
+            Some("-name") => std::ffi::OsString::from("--name"),
+            Some("-iname") => std::ffi::OsString::from("--iname"),
+            Some("-regex") => std::ffi::OsString::from("--regex"),
+            Some("-iregex") => std::ffi::OsString::from("--iregex"),
+            Some("-type") => std::ffi::OsString::from("--file-type"),
+            Some("-maxdepth") => std::ffi::OsString::from("--max-depth"),
+            Some("-xdev" | "-mount") => std::ffi::OsString::from("--xdev"),
+            Some("-follow") => std::ffi::OsString::from("--follow-symlinks"),
+            Some("-empty") => std::ffi::OsString::from("--empty"),
+            _ => os,
+        }
+    });
+    let mut parser = lexopt::Parser::from_iter(normalized);
 
     let mut follow_symlinks = false;
     let mut one_filesystem = true;
     let mut threads = default_threads();
     let mut max_depth = None;
+    let mut min_depth = None;
     let mut max_scan_rate = None;
+    let mut max_results = None;
     let mut name: Vec<String> = Vec::new();
     let mut regex: Vec<String> = Vec::new();
     let mut case_insensitive = false;
     let mut file_type: Vec<FileType> = Vec::new();
+    let mut exclude: Vec<String> = Vec::new();
+    let mut null = false;
+    let mut meta = meta::Predicates::default();
     let mut path: Vec<PathBuf> = Vec::new();
 
     while let Some(arg) = parser.next()? {
@@ -162,8 +232,14 @@ where
             Short('d') | Long("max-depth") => {
                 max_depth = Some(parser.value()?.parse()?);
             }
+            Long("min-depth") => {
+                min_depth = Some(parser.value()?.parse()?);
+            }
             Short('s') | Long("max-scan-rate") => {
                 max_scan_rate = Some(parser.value()?.parse()?);
+            }
+            Long("max-results") => {
+                max_results = Some(parser.value()?.parse()?);
             }
             Short('n') | Long("name") => {
                 name.push(parser.value()?.string()?);
@@ -174,8 +250,84 @@ where
             Short('i') | Long("case-insensitive") => {
                 case_insensitive = true;
             }
+            // -iname/-iregex = matcher + case-insensitivity; since --name and
+            // --regex are exclusive, the global flag affects only the one used
+            Long("iname") => {
+                case_insensitive = true;
+                name.push(val_str(&mut parser)?);
+            }
+            Long("iregex") => {
+                case_insensitive = true;
+                regex.push(val_str(&mut parser)?);
+            }
             Short('t') | Long("file-type") => {
                 file_type.push(parse_file_type(&parser.value()?.string()?)?);
+            }
+            // find's `-empty` predicate; equivalent to `--file-type empty`
+            Long("empty") => file_type.push(FileType::Empty),
+            Short('E') | Long("exclude") => {
+                exclude.push(parser.value()?.string()?);
+            }
+            // Parsed now so a bad pattern errors before the walk. size/time
+            // work everywhere; mode/owner are Unix-only (no mode bits on the
+            // fallback leaf), so absent off-Unix → "unexpected option".
+            Long("size") => {
+                meta.size =
+                    Some(meta::SizePred::parse(&parser.value()?.string()?)?);
+            }
+            Long("mtime") => meta.times.push(meta::TimePred::mtime(
+                &val_str(&mut parser)?,
+                meta::DAY,
+            )?),
+            Long("ctime") => meta.times.push(meta::TimePred::ctime(
+                &val_str(&mut parser)?,
+                meta::DAY,
+            )?),
+            Long("atime") => meta.times.push(meta::TimePred::atime(
+                &val_str(&mut parser)?,
+                meta::DAY,
+            )?),
+            Long("mmin") => meta.times.push(meta::TimePred::mtime(
+                &val_str(&mut parser)?,
+                meta::MIN,
+            )?),
+            Long("cmin") => meta.times.push(meta::TimePred::ctime(
+                &val_str(&mut parser)?,
+                meta::MIN,
+            )?),
+            Long("amin") => meta.times.push(meta::TimePred::atime(
+                &val_str(&mut parser)?,
+                meta::MIN,
+            )?),
+            #[cfg(unix)]
+            Long("perm") => {
+                meta.perm =
+                    Some(meta::PermPred::parse(&parser.value()?.string()?)?);
+            }
+            #[cfg(unix)]
+            Long("uid") => {
+                meta.uid =
+                    Some(meta::IdPred::parse(&parser.value()?.string()?)?);
+            }
+            #[cfg(unix)]
+            Long("gid") => {
+                meta.gid =
+                    Some(meta::IdPred::parse(&parser.value()?.string()?)?);
+            }
+            #[cfg(unix)]
+            Long("user") => {
+                let id = meta::resolve_user(&parser.value()?.string()?)?;
+                meta.uid = Some(meta::IdPred::exact(id));
+            }
+            #[cfg(unix)]
+            Long("group") => {
+                let id = meta::resolve_group(&parser.value()?.string()?)?;
+                meta.gid = Some(meta::IdPred::exact(id));
+            }
+            // `-print0` is rewritten to `--null` above; `--print0` (fd-style)
+            // and `-0` (xargs/grep-style) are accepted directly.
+            Short('0') | Long("null") | Long("print0") => {
+                null = true;
             }
             Value(val) => path.push(parse_paths(&val.string()?)?),
             _ => return Err(arg.unexpected().into()),
@@ -199,18 +351,28 @@ where
             vec![FileType::Directory, FileType::File, FileType::Symlink];
     }
 
-    Ok(Outcome::Run(Args {
+    Ok(Outcome::Run(Box::new(Args {
         follow_symlinks,
         one_filesystem,
         threads,
         max_depth,
+        min_depth,
         max_scan_rate,
+        max_results,
         name: (!name.is_empty()).then_some(name),
         regex: (!regex.is_empty()).then_some(regex),
         case_insensitive,
         file_type,
+        meta,
+        exclude: (!exclude.is_empty()).then_some(exclude),
+        null,
         path,
-    }))
+    })))
+}
+
+/// Next option value as a `String`; keeps the metadata parse arms terse.
+fn val_str(parser: &mut lexopt::Parser) -> Result<String, Error> {
+    Ok(parser.value()?.string()?)
 }
 
 /// Parses a `--file-type` value: a canonical name or its single-char alias.
@@ -290,7 +452,7 @@ mod tests {
     /// Unwraps `parse_argv` to the `Args` it produced, panicking otherwise.
     fn run(extra: &[&str]) -> Args {
         match parse_argv(extra).unwrap() {
-            Outcome::Run(a) => a,
+            Outcome::Run(a) => *a,
             other => panic!("expected Outcome::Run, got {other:?}"),
         }
     }
@@ -334,6 +496,71 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_inner_find_name_alias() {
+        let dir = tmp_dir();
+        assert_eq!(
+            run(&["-name", "*.rs", &dir]).name,
+            Some(vec!["*.rs".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_inner_find_type_alias() {
+        let dir = tmp_dir();
+        assert_eq!(run(&["-type", "f", &dir]).file_type, vec![FileType::File]);
+    }
+
+    #[test]
+    fn test_parse_inner_find_maxdepth_alias() {
+        let dir = tmp_dir();
+        assert_eq!(run(&["-maxdepth", "2", &dir]).max_depth, Some(2));
+    }
+
+    #[test]
+    fn test_parse_inner_find_regex_alias() {
+        let dir = tmp_dir();
+        assert_eq!(
+            run(&["-regex", ".*", &dir]).regex,
+            Some(vec![".*".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_inner_find_xdev_and_mount_aliases() {
+        let dir = tmp_dir();
+        assert!(run(&["--cross-filesystem", "-xdev", &dir]).one_filesystem);
+        assert!(run(&["--cross-filesystem", "-mount", &dir]).one_filesystem);
+    }
+
+    #[test]
+    fn test_parse_inner_find_follow_alias() {
+        let dir = tmp_dir();
+        assert!(run(&["-follow", &dir]).follow_symlinks);
+    }
+
+    #[test]
+    fn test_parse_inner_find_empty_alias() {
+        let dir = tmp_dir();
+        assert!(run(&["-empty", &dir]).file_type.contains(&FileType::Empty));
+    }
+
+    #[test]
+    fn test_parse_inner_iname_sets_name_and_case_insensitive() {
+        let dir = tmp_dir();
+        let a = run(&["-iname", "*.RS", &dir]);
+        assert_eq!(a.name, Some(vec!["*.RS".to_string()]));
+        assert!(a.case_insensitive);
+    }
+
+    #[test]
+    fn test_parse_inner_iregex_sets_regex_and_case_insensitive() {
+        let dir = tmp_dir();
+        let a = run(&["-iregex", ".*", &dir]);
+        assert_eq!(a.regex, Some(vec![".*".to_string()]));
+        assert!(a.case_insensitive);
+    }
+
+    #[test]
     fn test_parse_inner_combined_shorts() {
         let dir = tmp_dir();
         let a = run(&["-fi", &dir]);
@@ -351,9 +578,128 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_inner_exclude_default_none() {
+        let dir = tmp_dir();
+        assert_eq!(run(&[&dir]).exclude, None);
+    }
+
+    #[test]
+    fn test_parse_inner_exclude_repeatable() {
+        let dir = tmp_dir();
+        let a = run(&["--exclude", ".git", "-E", "node_modules", &dir]);
+        assert_eq!(
+            a.exclude,
+            Some(vec![".git".to_string(), "node_modules".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_inner_null_default_false() {
+        let dir = tmp_dir();
+        assert!(!run(&[&dir]).null);
+    }
+
+    #[test]
+    fn test_parse_inner_null_long() {
+        let dir = tmp_dir();
+        assert!(run(&["--null", &dir]).null);
+    }
+
+    #[test]
+    fn test_parse_inner_null_short_zero() {
+        let dir = tmp_dir();
+        assert!(run(&["-0", &dir]).null);
+    }
+
+    #[test]
+    fn test_parse_inner_print0_find_alias() {
+        // find(1)-style `-print0` is normalized to `--null`.
+        let dir = tmp_dir();
+        assert!(run(&["-print0", &dir]).null);
+    }
+
+    #[test]
     fn test_parse_inner_max_depth() {
         let dir = tmp_dir();
         assert_eq!(run(&["-d", "3", &dir]).max_depth, Some(3));
+    }
+
+    #[test]
+    fn test_parse_inner_no_metadata_predicate_is_inactive() {
+        let dir = tmp_dir();
+        assert!(!run(&[&dir]).meta.is_active());
+    }
+
+    #[test]
+    fn test_parse_inner_size_wires_predicate_and_find_alias() {
+        let dir = tmp_dir();
+        assert!(run(&["--size", "+1k", &dir]).meta.is_active());
+        assert!(run(&["-size", "+1k", &dir]).meta.is_active());
+    }
+
+    #[test]
+    fn test_parse_inner_size_requires_unit_suffix() {
+        let dir = tmp_dir();
+        assert!(parse_argv(&["--size", "10", &dir]).is_err());
+    }
+
+    #[test]
+    fn test_parse_inner_time_flags_and_aliases() {
+        let dir = tmp_dir();
+        assert!(run(&["-mtime", "-7", &dir]).meta.is_active());
+        assert!(run(&["--amin", "+30", &dir]).meta.is_active());
+        // multiple time predicates accumulate (AND)
+        let a = run(&["-mtime", "-7", "-atime", "+1", &dir]);
+        assert!(a.meta.is_active());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_inner_perm_uid_gid() {
+        let dir = tmp_dir();
+        assert!(run(&["-perm", "644", &dir]).meta.is_active());
+        assert!(run(&["-perm", "-u+w", &dir]).meta.is_active());
+        assert!(run(&["--uid", "0", &dir]).meta.is_active());
+        assert!(run(&["-gid", "+10", &dir]).meta.is_active());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_inner_user_resolves_and_rejects_unknown() {
+        let dir = tmp_dir();
+        assert!(run(&["-user", "root", &dir]).meta.is_active());
+        assert!(parse_argv(&["--user", "no-such-user-xyz-123", &dir]).is_err());
+    }
+
+    #[test]
+    fn test_parse_inner_max_results_default_none() {
+        let dir = tmp_dir();
+        assert_eq!(run(&[&dir]).max_results, None);
+    }
+
+    #[test]
+    fn test_parse_inner_max_results() {
+        let dir = tmp_dir();
+        assert_eq!(run(&["--max-results", "5", &dir]).max_results, Some(5));
+    }
+
+    #[test]
+    fn test_parse_inner_min_depth_default_none() {
+        let dir = tmp_dir();
+        assert_eq!(run(&[&dir]).min_depth, None);
+    }
+
+    #[test]
+    fn test_parse_inner_min_depth() {
+        let dir = tmp_dir();
+        assert_eq!(run(&["--min-depth", "2", &dir]).min_depth, Some(2));
+    }
+
+    #[test]
+    fn test_parse_inner_mindepth_find_alias() {
+        // find(1)-style `-mindepth N` is normalized to `--min-depth N`.
+        let dir = tmp_dir();
+        assert_eq!(run(&["-mindepth", "2", &dir]).min_depth, Some(2));
     }
 
     #[test]
@@ -551,7 +897,6 @@ mod tests {
         assert!(parse_argv(&["--max-scan-rate", "abc", &dir]).is_err());
     }
 
-    // A4 — parse_paths normalises away ".." components
     #[test]
     fn test_parse_paths_normalizes_dotdot() {
         use std::path::Component;
