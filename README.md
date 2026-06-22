@@ -17,13 +17,18 @@ file/directory. Both `--name` and `--regex` accept multiple patterns.
 
 Results can be filtered further by metadata: size (`--size`),
 modification/change/access time (`--mtime`/`--ctime`/`--atime` in days,
-`--mmin`/`--cmin`/`--amin` in minutes), permission bits (`--perm`, octal or
-symbolic, with find's `/`/`-`/exact semantics), and owner
-(`--uid`/`--gid`/`--user`/`--group`). Traversal can be bounded by depth
-(`--min-depth`/`--max-depth`), whole subtrees pruned by name (`--exclude`),
-and the walk stopped after the first N matches (`--max-results`). Output can be
-NUL-terminated with `--null` (`-print0`) for safe piping into `xargs -0`. Most
-flags also accept their find-style spellings (`-size`, `-mtime`, `-perm`, …).
+`--mmin`/`--cmin`/`--amin` in minutes, or relative to a reference file with
+`--newer`/`--anewer`/`--cnewer`), permission bits (`--perm`, octal or symbolic,
+with find's `/`/`-`/exact semantics), owner (`--uid`/`--gid`/`--user`/`--group`,
+or orphaned ids with `--nouser`/`--nogroup`), hard-link count (`--links`), inode
+(`--inum`), and access checks (`--readable`/`--writable`/`--executable`). Paths
+can also be matched as a whole-path glob (`--path`/`--wholename`) or by a
+symlink's target (`--lname`). Traversal can be bounded by depth
+(`--min-depth`/`--max-depth`), whole subtrees pruned by name (`--exclude`), and
+the walk stopped after the first match (`--quit`) or N matches
+(`--max-results`). Output can be NUL-terminated with `--null` (`-print0`) for
+safe piping into `xargs -0`. Most flags also accept their find-style spellings
+(`-name`, `-type`, `-size`, `-perm`, `-newer`, …).
 
 By default, symlinks are not followed and filesystem boundaries are not
 crossed. The thread count defaults to the number of available CPU cores. The
@@ -80,6 +85,14 @@ Options:
       --perm <[/-]MODE>    Filter by permission bits, octal or symbolic; -MODE all set, /MODE any set, MODE exact [alias: -perm]
       --uid, --gid <[+-]N> Filter by numeric owner/group id [aliases: -uid/-gid]
       --user, --group <NAME>  Filter by owner/group name (or numeric id) [aliases: -user/-group]
+      --links <[+-]N>      Filter by hard-link count [alias: -links]
+      --inum <[+-]N>       Filter by inode number [alias: -inum]
+      --newer, --anewer, --cnewer <FILE>  Entry's m/a/c-time is newer than FILE's mtime [aliases: -newer/-anewer/-cnewer]
+      --nouser, --nogroup  Owner uid/gid resolves to no passwd/group entry [aliases: -nouser/-nogroup]
+      --path, --wholename <GLOB>  Glob over the full path (* crosses /) [aliases: -path/-wholename; -ipath/-iwholename add -i]
+      --lname <GLOB>       Glob over a symlink's target [alias: -lname; -ilname adds -i]
+      --readable, --writable, --executable  Filter by access (real uid/gid) [aliases: -readable/-writable/-executable]
+      --quit               Stop after the first match (= --max-results 1) [alias: -quit]
   -h, --help               Print help
   -V, --version            Print version
 ```

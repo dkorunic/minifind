@@ -123,6 +123,21 @@ where
         regex::build_regex_set(args.regex.as_deref(), args.case_insensitive)?;
     let regex_enabled = args.regex.is_some();
 
+    // -path/-wholename: glob over the full path. globset's default lets `*`
+    // cross `/`, matching find's -path semantics (file_name() glob never sees
+    // a separator, so --name is unaffected).
+    let glob_path = glob::build_glob_set(
+        args.path_glob.as_deref(),
+        args.case_insensitive,
+    )?;
+    let path_glob_enabled = args.path_glob.is_some();
+
+    // -lname: glob over a symlink's target (matched after a readlink).
+    let glob_lname =
+        glob::build_glob_set(args.lname.as_deref(), args.case_insensitive)?;
+    let lname_enabled = args.lname.is_some();
+    let access = args.access;
+
     // built here so a bad glob errors before the walk; applied in the walker
     // (where a matched dir can be pruned)
     let exclude_set =
@@ -196,6 +211,11 @@ where
             // reborrow so the move-visitor captures `&GlobSet`, not copies
             let glob_name = &glob_name;
             let regex_name = &regex_name;
+            let glob_path = &glob_path;
+            let glob_lname = &glob_lname;
+            // per-thread memo for -nouser/-nogroup reverse lookups
+            #[cfg(unix)]
+            let mut nss = meta::NssCache::default();
             let mut batch = BatchSender::new(tx.clone());
             move |entry: Entry, stat: &walk::StatAt| {
                 if shutdown.load(Ordering::Relaxed) {
@@ -217,12 +237,42 @@ where
                 {
                     return WalkState::Continue;
                 }
-                // stat last (lazy); unstattable entries are skipped, like find
-                if meta_active {
-                    match stat.fetch(meta_mask) {
-                        Ok(m) if predicates.matches(&m, now) => {}
+                // -path/-wholename
+                if path_glob_enabled && !glob_path.is_match(&entry.path) {
+                    return WalkState::Continue;
+                }
+                // -lname: a symlink's target (non-symlinks never match)
+                if lname_enabled {
+                    if entry.file_type != filetype::EntryType::Symlink {
+                        return WalkState::Continue;
+                    }
+                    match stat.readlink() {
+                        Some(t) if glob_lname.is_match(Path::new(&t)) => {}
                         _ => return WalkState::Continue,
                     }
+                }
+                // stat-based predicates (lazy); unstattable → skipped, like find
+                if meta_active {
+                    let Ok(m) = stat.fetch(meta_mask) else {
+                        return WalkState::Continue;
+                    };
+                    if !predicates.matches(&m, now) {
+                        return WalkState::Continue;
+                    }
+                    // -nouser/-nogroup: reject when the id *does* resolve
+                    #[cfg(unix)]
+                    {
+                        if predicates.nouser && nss.user_exists(m.uid) {
+                            return WalkState::Continue;
+                        }
+                        if predicates.nogroup && nss.group_exists(m.gid) {
+                            return WalkState::Continue;
+                        }
+                    }
+                }
+                // -readable/-writable/-executable (faccessat, real uid/gid)
+                if access != 0 && !stat.access(access) {
+                    return WalkState::Continue;
                 }
                 // stop walking once the output channel closes
                 if !batch.push(entry) {

@@ -113,10 +113,36 @@ fn meta_of(path: &Path, follow: bool) -> io::Result<Meta> {
         mtime: secs(md.modified()),
         ctime: secs(md.created()),
         atime: secs(md.accessed()),
+        // mode/uid/gid/nlink/ino need Unix metadata; those predicates are
+        // rejected at parse off-Unix, so zero placeholders are never read.
         mode: 0,
         uid: 0,
         gid: 0,
+        nlink: 0,
+        ino: 0,
     })
+}
+
+/// `-readable`/`-writable`/`-executable` are Unix-only (rejected at parse off
+/// Unix), so these never run; they exist to keep the leaf API uniform.
+pub(crate) fn access_at(_dir: &DirFd, _name: &OsStr, _mode: u8) -> bool {
+    true
+}
+
+pub(crate) fn access_root(_path: &Path, _mode: u8) -> bool {
+    true
+}
+
+/// Reads a symlink's target (for `-lname`) by full path.
+pub(crate) fn readlink_at(
+    dir: &DirFd,
+    name: &OsStr,
+) -> Option<std::ffi::OsString> {
+    std::fs::read_link(dir.join(name)).ok().map(PathBuf::into_os_string)
+}
+
+pub(crate) fn readlink_root(path: &Path) -> Option<std::ffi::OsString> {
+    std::fs::read_link(path).ok().map(PathBuf::into_os_string)
 }
 
 fn map_type(ft: std::fs::FileType) -> EntryType {

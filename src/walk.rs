@@ -105,6 +105,24 @@ impl<'a> StatAt<'a> {
             }
         }
     }
+
+    /// `faccessat` for the `meta::access` mode bits (`-readable`/…).
+    pub fn access(&self, mode: u8) -> bool {
+        match self.src {
+            StatSrc::Child { dir, name } => {
+                platform::access_at(dir, name, mode)
+            }
+            StatSrc::Root { path } => platform::access_root(path, mode),
+        }
+    }
+
+    /// The symlink target (for `-lname`); `None` if not a symlink / unreadable.
+    pub fn readlink(&self) -> Option<std::ffi::OsString> {
+        match self.src {
+            StatSrc::Child { dir, name } => platform::readlink_at(dir, name),
+            StatSrc::Root { path } => platform::readlink_root(path),
+        }
+    }
 }
 
 /// Immutable shared state for one `walk_parallel` run, bundled so the
@@ -376,6 +394,9 @@ mod tests {
             case_insensitive: false,
             file_type: vec![],
             meta: crate::meta::Predicates::default(),
+            path_glob: None,
+            lname: None,
+            access: 0,
             exclude: None,
             null: false,
         }

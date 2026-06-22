@@ -47,6 +47,9 @@ fn base_args(paths: Vec<PathBuf>, file_type: Vec<FileType>) -> Args {
         case_insensitive: false,
         file_type,
         meta: minifind::meta::Predicates::default(),
+        path_glob: None,
+        lname: None,
+        access: 0,
         exclude: None,
         null: false,
     }
@@ -406,6 +409,104 @@ fn uid_predicate_matches_owner() {
         base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
     args.meta.uid = Some(IdPred::exact(uid.wrapping_add(1)));
     assert!(!run_capture(&args).iter().any(|p| p.ends_with("owned")));
+}
+
+#[test]
+fn path_glob_matches_full_path() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("a/b")).unwrap();
+    std::fs::write(tmp.path().join("a/b/deep.txt"), b"x").unwrap();
+    std::fs::write(tmp.path().join("top.txt"), b"x").unwrap();
+    let mut args =
+        base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
+    // `*` crosses `/` (find -path semantics), so this matches the nested file
+    args.path_glob = Some(vec!["*/a/b/*".to_string()]);
+    let results = run_capture(&args);
+    assert!(results.iter().any(|p| p.ends_with("deep.txt")));
+    assert!(!results.iter().any(|p| p.ends_with("top.txt")));
+}
+
+#[cfg(unix)]
+#[test]
+fn lname_matches_symlink_target() {
+    let tmp = TempDir::new().unwrap();
+    std::os::unix::fs::symlink("/usr/lib/libc.so", tmp.path().join("good"))
+        .unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", tmp.path().join("other"))
+        .unwrap();
+    let mut args =
+        base_args(vec![tmp.path().to_path_buf()], vec![FileType::Symlink]);
+    args.lname = Some(vec!["*.so".to_string()]);
+    let results = run_capture(&args);
+    assert!(results.iter().any(|p| p.ends_with("good")));
+    assert!(!results.iter().any(|p| p.ends_with("other")));
+}
+
+#[cfg(unix)]
+#[test]
+fn links_predicate_matches_hardlink_count() {
+    let tmp = TempDir::new().unwrap();
+    let a = tmp.path().join("a");
+    std::fs::write(&a, b"x").unwrap();
+    std::fs::hard_link(&a, tmp.path().join("b")).unwrap(); // a,b now nlink 2
+    std::fs::write(tmp.path().join("solo"), b"x").unwrap(); // nlink 1
+    let mut args =
+        base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
+    args.meta.links = Some(minifind::meta::IdPred::parse("2").unwrap());
+    let results = run_capture(&args);
+    assert!(!results.iter().any(|p| p.ends_with("solo")));
+    assert_eq!(
+        results
+            .iter()
+            .filter(|p| p.ends_with("a") || p.ends_with("b"))
+            .count(),
+        2
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn inum_predicate_matches_inode() {
+    use std::os::unix::fs::MetadataExt;
+    let tmp = TempDir::new().unwrap();
+    let f = tmp.path().join("f");
+    std::fs::write(&f, b"x").unwrap();
+    let ino = std::fs::metadata(&f).unwrap().ino();
+    let mut args =
+        base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
+    args.meta.inum =
+        Some(minifind::meta::IdPred::parse(&ino.to_string()).unwrap());
+    let results = run_capture(&args);
+    assert!(results.iter().any(|p| p.ends_with("f")));
+}
+
+#[cfg(unix)]
+#[test]
+fn readable_predicate_keeps_a_readable_file() {
+    // R_OK is unaffected by a noexec mount or by running as root, so a normal
+    // 0644 file is reliably "readable" — this exercises the faccessat wiring.
+    // (-executable/-writable negatives depend on the mount and uid, so the
+    // find-parity check covers those end to end.)
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("r.txt"), b"x").unwrap();
+    let mut args =
+        base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
+    args.access = minifind::meta::access::READ;
+    let results = run_capture(&args);
+    assert!(results.iter().any(|p| p.ends_with("r.txt")));
+}
+
+#[cfg(unix)]
+#[test]
+fn nouser_excludes_owned_entries() {
+    // Files we create are owned by a uid that resolves (the running user), so
+    // -nouser must exclude them.
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("owned.txt"), b"x").unwrap();
+    let mut args =
+        base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
+    args.meta.nouser = true;
+    assert!(run_capture(&args).is_empty());
 }
 
 #[test]

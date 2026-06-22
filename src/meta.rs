@@ -26,11 +26,22 @@ pub mod mask {
     pub const MODE: u32 = 1 << 4;
     pub const UID: u32 = 1 << 5;
     pub const GID: u32 = 1 << 6;
+    pub const NLINK: u32 = 1 << 7;
+    pub const INO: u32 = 1 << 8;
 }
 
 /// Seconds per day / minute, the units for the time predicates.
 pub const DAY: i64 = 86_400;
 pub const MIN: i64 = 60;
+
+/// `faccessat` mode bits for `-readable`/`-writable`/`-executable`, translated
+/// to platform `Access` flags by the leaf. Checked against the *real* uid/gid,
+/// like find.
+pub mod access {
+    pub const READ: u8 = 1 << 0;
+    pub const WRITE: u8 = 1 << 1;
+    pub const EXEC: u8 = 1 << 2;
+}
 
 /// Stat fields a predicate may read. The platform leaf fills the masked ones;
 /// the rest are unspecified and never observed.
@@ -43,6 +54,8 @@ pub struct Meta {
     pub mode: u32,
     pub uid: u32,
     pub gid: u32,
+    pub nlink: u64,
+    pub ino: u64,
 }
 
 /// find's `N` / `+N` / `-N` numeric comparison (`+` = greater, `-` = less).
@@ -117,6 +130,14 @@ enum TimeField {
     Mtime,
     Ctime,
     Atime,
+}
+
+fn time_field_mask(field: TimeField) -> u32 {
+    match field {
+        TimeField::Mtime => mask::MTIME,
+        TimeField::Ctime => mask::CTIME,
+        TimeField::Atime => mask::ATIME,
+    }
 }
 
 /// `-mtime`/`-ctime`/`-atime` (days) and `-mmin`/`-cmin`/`-amin` (minutes).
@@ -303,8 +324,9 @@ fn parse_symbolic_mode(s: &str) -> Result<u32, Error> {
     Ok(mode)
 }
 
-/// `-uid`/`-gid` (numeric `+N`/`-N`/`N`) and the resolved id behind
-/// `-user`/`-group` (exact match).
+/// A numeric `+N`/`-N`/`N` predicate over a single unsigned field. Backs
+/// `-uid`/`-gid` (and the resolved id behind `-user`/`-group`), `-links`
+/// (nlink), and `-inum` (inode).
 #[derive(Debug, Clone, Copy)]
 pub struct IdPred {
     cmp: Comparison,
@@ -319,9 +341,52 @@ impl IdPred {
         IdPred { cmp: Comparison::Exact(i64::from(id)) }
     }
 
-    fn matches(&self, id: u32) -> bool {
-        self.cmp.matches(i64::from(id))
+    fn matches(&self, value: u64) -> bool {
+        self.cmp.matches(value as i64)
     }
+}
+
+/// `-newer FILE` / `-anewer` / `-cnewer`: the entry's m/a/c-time is strictly
+/// newer than the reference file's **modification** time (captured once at
+/// parse). find compares whole seconds.
+#[derive(Debug, Clone, Copy)]
+pub struct NewerPred {
+    ref_mtime: i64,
+    field: TimeField,
+}
+
+impl NewerPred {
+    pub fn newer(ref_mtime: i64) -> Self {
+        NewerPred { ref_mtime, field: TimeField::Mtime }
+    }
+
+    pub fn anewer(ref_mtime: i64) -> Self {
+        NewerPred { ref_mtime, field: TimeField::Atime }
+    }
+
+    pub fn cnewer(ref_mtime: i64) -> Self {
+        NewerPred { ref_mtime, field: TimeField::Ctime }
+    }
+
+    fn matches(&self, m: &Meta) -> bool {
+        let t = match self.field {
+            TimeField::Mtime => m.mtime,
+            TimeField::Ctime => m.ctime,
+            TimeField::Atime => m.atime,
+        };
+        t > self.ref_mtime
+    }
+}
+
+/// Modification time (whole seconds since the epoch) of `path`, the reference
+/// for the `-newer` family. Errors if the file can't be stat'd.
+pub fn file_mtime(path: &std::path::Path) -> Result<i64, Error> {
+    use std::time::UNIX_EPOCH;
+    let mtime =
+        std::fs::metadata(path).and_then(|m| m.modified()).map_err(|e| {
+            anyhow!("cannot stat reference file '{}': {e}", path.display())
+        })?;
+    Ok(mtime.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
 }
 
 /// All active metadata predicates for one run. Built at arg-parse; the walker
@@ -333,6 +398,14 @@ pub struct Predicates {
     pub perm: Option<PermPred>,
     pub uid: Option<IdPred>,
     pub gid: Option<IdPred>,
+    pub links: Option<IdPred>,
+    pub inum: Option<IdPred>,
+    pub newer: Vec<NewerPred>,
+    /// `-nouser` / `-nogroup`: the uid/gid resolves to no NSS entry. Evaluated
+    /// in the visitor (needs a reverse lookup with a per-thread cache), not in
+    /// [`matches`](Self::matches); `mask` still requests the id field.
+    pub nouser: bool,
+    pub nogroup: bool,
 }
 
 impl Predicates {
@@ -343,6 +416,11 @@ impl Predicates {
             || self.perm.is_some()
             || self.uid.is_some()
             || self.gid.is_some()
+            || self.links.is_some()
+            || self.inum.is_some()
+            || !self.newer.is_empty()
+            || self.nouser
+            || self.nogroup
     }
 
     /// The `statx` field mask covering exactly the active predicates.
@@ -352,20 +430,25 @@ impl Predicates {
             m |= mask::SIZE;
         }
         for t in &self.times {
-            m |= match t.field {
-                TimeField::Mtime => mask::MTIME,
-                TimeField::Ctime => mask::CTIME,
-                TimeField::Atime => mask::ATIME,
-            };
+            m |= time_field_mask(t.field);
+        }
+        for n in &self.newer {
+            m |= time_field_mask(n.field);
         }
         if self.perm.is_some() {
             m |= mask::MODE;
         }
-        if self.uid.is_some() {
+        if self.uid.is_some() || self.nouser {
             m |= mask::UID;
         }
-        if self.gid.is_some() {
+        if self.gid.is_some() || self.nogroup {
             m |= mask::GID;
+        }
+        if self.links.is_some() {
+            m |= mask::NLINK;
+        }
+        if self.inum.is_some() {
+            m |= mask::INO;
         }
         m
     }
@@ -389,12 +472,27 @@ impl Predicates {
             }
         }
         if let Some(u) = &self.uid {
-            if !u.matches(meta.uid) {
+            if !u.matches(u64::from(meta.uid)) {
                 return false;
             }
         }
         if let Some(g) = &self.gid {
-            if !g.matches(meta.gid) {
+            if !g.matches(u64::from(meta.gid)) {
+                return false;
+            }
+        }
+        if let Some(l) = &self.links {
+            if !l.matches(meta.nlink) {
+                return false;
+            }
+        }
+        if let Some(i) = &self.inum {
+            if !i.matches(meta.ino) {
+                return false;
+            }
+        }
+        for n in &self.newer {
+            if !n.matches(meta) {
                 return false;
             }
         }
@@ -501,12 +599,110 @@ fn nss_gid(name: &str) -> Option<u32> {
     }
 }
 
+/// Per-walker-thread memo for the reverse lookups behind `-nouser`/`-nogroup`.
+/// Owner ids repeat heavily within a tree, so caching `uid/gid → has-entry`
+/// turns the per-entry `getpwuid_r`/`getgrgid_r` into one lookup per distinct
+/// id. One cache per thread keeps it lock-free.
+#[cfg(unix)]
+#[derive(Default)]
+pub struct NssCache {
+    users: std::collections::HashMap<u32, bool>,
+    groups: std::collections::HashMap<u32, bool>,
+}
+
+#[cfg(unix)]
+impl NssCache {
+    /// Whether `uid` resolves to a passwd entry (`-nouser` matches when not).
+    pub fn user_exists(&mut self, uid: u32) -> bool {
+        *self.users.entry(uid).or_insert_with(|| nss_user_exists(uid))
+    }
+
+    /// Whether `gid` resolves to a group entry (`-nogroup` matches when not).
+    pub fn group_exists(&mut self, gid: u32) -> bool {
+        *self.groups.entry(gid).or_insert_with(|| nss_group_exists(gid))
+    }
+}
+
+/// `getpwuid_r` (reentrant): does a passwd entry exist for `uid`?
+#[cfg(unix)]
+fn nss_user_exists(uid: u32) -> bool {
+    // SAFETY: `passwd` is repr(C) of ints and nullable pointers; all-zero is a
+    // valid initial state that getpwuid_r overwrites on success.
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0 as libc::c_char; 1024];
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    loop {
+        // SAFETY: valid out-pointers and a live owned buffer; getpwuid_r is
+        // reentrant (safe under parallelism).
+        let rc = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut pwd,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == 0 {
+            return !result.is_null();
+        }
+        if rc == libc::ERANGE {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        // On lookup error, assume the id resolves (so `-nouser` stays
+        // conservative and does not over-match).
+        return true;
+    }
+}
+
+/// `getgrgid_r` (reentrant): does a group entry exist for `gid`?
+#[cfg(unix)]
+fn nss_group_exists(gid: u32) -> bool {
+    // SAFETY: `group` is repr(C) of ints and nullable pointers; all-zero is a
+    // valid initial state that getgrgid_r overwrites on success.
+    let mut grp: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0 as libc::c_char; 1024];
+    let mut result: *mut libc::group = std::ptr::null_mut();
+    loop {
+        // SAFETY: valid out-pointers and a live owned buffer; getgrgid_r is
+        // reentrant (safe under parallelism).
+        let rc = unsafe {
+            libc::getgrgid_r(
+                gid,
+                &mut grp,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == 0 {
+            return !result.is_null();
+        }
+        if rc == libc::ERANGE {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        return true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn meta() -> Meta {
-        Meta { size: 0, mtime: 0, ctime: 0, atime: 0, mode: 0, uid: 0, gid: 0 }
+        Meta {
+            size: 0,
+            mtime: 0,
+            ctime: 0,
+            atime: 0,
+            mode: 0,
+            uid: 0,
+            gid: 0,
+            nlink: 0,
+            ino: 0,
+        }
     }
 
     #[test]
@@ -567,6 +763,61 @@ mod tests {
         assert!(TimePred::atime("5", MIN).unwrap().matches(&m, now));
         m.ctime = now - 3 * MIN;
         assert!(TimePred::ctime("-5", MIN).unwrap().matches(&m, now));
+    }
+
+    #[test]
+    fn links_predicate_over_nlink() {
+        let mut m = meta();
+        m.nlink = 2;
+        let p = Predicates {
+            links: Some(IdPred::parse("2").unwrap()),
+            ..meta_p()
+        };
+        assert!(p.matches(&m, 0));
+        m.nlink = 3;
+        assert!(!p.matches(&m, 0));
+    }
+
+    #[test]
+    fn inum_predicate_over_ino() {
+        let mut m = meta();
+        m.ino = 4096;
+        let p = Predicates {
+            inum: Some(IdPred::parse("+4000").unwrap()),
+            ..meta_p()
+        };
+        assert!(p.matches(&m, 0));
+        m.ino = 100;
+        assert!(!p.matches(&m, 0));
+    }
+
+    #[test]
+    fn newer_compares_against_reference_mtime() {
+        let mut m = meta();
+        let p = Predicates { newer: vec![NewerPred::newer(1000)], ..meta_p() };
+        m.mtime = 1001;
+        assert!(p.matches(&m, 0));
+        m.mtime = 1000; // strictly newer required
+        assert!(!p.matches(&m, 0));
+    }
+
+    #[test]
+    fn newer_mask_requests_the_right_field() {
+        let p = Predicates { newer: vec![NewerPred::anewer(0)], ..meta_p() };
+        assert_eq!(p.mask(), mask::ATIME);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nss_cache_resolves_root_and_misses_high_id() {
+        let mut cache = NssCache::default();
+        assert!(cache.user_exists(0)); // root exists on every unix
+        assert!(!cache.user_exists(4_000_000_000)); // no such uid
+    }
+
+    /// A `Predicates` with everything empty, for `..` struct-update in tests.
+    fn meta_p() -> Predicates {
+        Predicates::default()
     }
 
     #[test]

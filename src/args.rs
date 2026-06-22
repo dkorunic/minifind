@@ -54,6 +54,16 @@ pub struct Args {
     /// parsed (and `-user`/`-group` resolved to ids) at arg-parse time.
     pub meta: meta::Predicates,
 
+    /// Glob patterns matched against the **full path** (`-path`/`-wholename`).
+    pub path_glob: Option<Vec<String>>,
+
+    /// Glob patterns matched against a symlink's **target** (`-lname`).
+    pub lname: Option<Vec<String>>,
+
+    /// `faccessat` mode bits for `-readable`/`-writable`/`-executable`
+    /// (see [`meta::access`]); 0 = no access check.
+    pub access: u8,
+
     /// Glob patterns whose matching entries (by file name) are excluded
     /// (`-E`/`--exclude`); a matched directory is pruned (not descended).
     pub exclude: Option<Vec<String>>,
@@ -121,6 +131,14 @@ Options:
       --perm <[/-]MODE>    Filter by permission bits, octal or symbolic; -MODE all set, /MODE any set, MODE exact [alias: -perm]
       --uid, --gid <[+-]N> Filter by numeric owner/group id [aliases: -uid/-gid]
       --user, --group <NAME>  Filter by owner/group name (or numeric id) [aliases: -user/-group]
+      --links <[+-]N>      Filter by hard-link count [alias: -links]
+      --inum <[+-]N>       Filter by inode number [alias: -inum]
+      --newer, --anewer, --cnewer <FILE>  Entry's m/a/c-time is newer than FILE's mtime [aliases: -newer/-anewer/-cnewer]
+      --nouser, --nogroup  Owner uid/gid resolves to no passwd/group entry [aliases: -nouser/-nogroup]
+      --path, --wholename <GLOB>  Glob over the full path (* crosses /) [aliases: -path/-wholename; -ipath/-iwholename add -i]
+      --lname <GLOB>       Glob over a symlink's target [alias: -lname; -ilname adds -i]
+      --readable, --writable, --executable  Filter by access (real uid/gid) [aliases: -readable/-writable/-executable]
+      --quit               Stop after the first match (= --max-results 1) [alias: -quit]
   -h, --help               Print help
   -V, --version            Print version
 ";
@@ -192,6 +210,30 @@ where
             Some("-xdev" | "-mount") => std::ffi::OsString::from("--xdev"),
             Some("-follow") => std::ffi::OsString::from("--follow-symlinks"),
             Some("-empty") => std::ffi::OsString::from("--empty"),
+            Some("-links") => std::ffi::OsString::from("--links"),
+            Some("-inum") => std::ffi::OsString::from("--inum"),
+            Some("-newer") => std::ffi::OsString::from("--newer"),
+            Some("-anewer") => std::ffi::OsString::from("--anewer"),
+            Some("-cnewer") => std::ffi::OsString::from("--cnewer"),
+            Some("-path") => std::ffi::OsString::from("--path"),
+            Some("-wholename") => std::ffi::OsString::from("--wholename"),
+            Some("-ipath") => std::ffi::OsString::from("--ipath"),
+            Some("-iwholename") => std::ffi::OsString::from("--iwholename"),
+            Some("-lname") => std::ffi::OsString::from("--lname"),
+            Some("-ilname") => std::ffi::OsString::from("--ilname"),
+            Some("-readable") => std::ffi::OsString::from("--readable"),
+            Some("-writable") => std::ffi::OsString::from("--writable"),
+            Some("-executable") => std::ffi::OsString::from("--executable"),
+            Some("-nouser") => std::ffi::OsString::from("--nouser"),
+            Some("-nogroup") => std::ffi::OsString::from("--nogroup"),
+            Some("-quit") => std::ffi::OsString::from("--quit"),
+            Some("-print") => std::ffi::OsString::from("--print"),
+            Some("-ignore_readdir_race") => {
+                std::ffi::OsString::from("--ignore-readdir-race")
+            }
+            Some("-noignore_readdir_race") => {
+                std::ffi::OsString::from("--noignore-readdir-race")
+            }
             _ => os,
         }
     });
@@ -211,6 +253,9 @@ where
     let mut exclude: Vec<String> = Vec::new();
     let mut null = false;
     let mut meta = meta::Predicates::default();
+    let mut path_glob: Vec<String> = Vec::new();
+    let mut lname: Vec<String> = Vec::new();
+    let mut access: u8 = 0;
     let mut path: Vec<PathBuf> = Vec::new();
 
     while let Some(arg) = parser.next()? {
@@ -324,6 +369,59 @@ where
                 let id = meta::resolve_group(&parser.value()?.string()?)?;
                 meta.gid = Some(meta::IdPred::exact(id));
             }
+            // -links/-inum read Unix stat fields (nlink/ino); Unix-only.
+            #[cfg(unix)]
+            Long("links") => {
+                meta.links =
+                    Some(meta::IdPred::parse(&parser.value()?.string()?)?);
+            }
+            #[cfg(unix)]
+            Long("inum") => {
+                meta.inum =
+                    Some(meta::IdPred::parse(&parser.value()?.string()?)?);
+            }
+            // -newer family: stat the reference file once, here.
+            Long("newer") => meta.newer.push(meta::NewerPred::newer(
+                meta::file_mtime(Path::new(&parser.value()?))?,
+            )),
+            Long("anewer") => meta.newer.push(meta::NewerPred::anewer(
+                meta::file_mtime(Path::new(&parser.value()?))?,
+            )),
+            Long("cnewer") => meta.newer.push(meta::NewerPred::cnewer(
+                meta::file_mtime(Path::new(&parser.value()?))?,
+            )),
+            // -nouser/-nogroup need reverse NSS; Unix-only.
+            #[cfg(unix)]
+            Long("nouser") => meta.nouser = true,
+            #[cfg(unix)]
+            Long("nogroup") => meta.nogroup = true,
+            // full-path globs; -ipath/-iwholename add case-insensitivity
+            Long("path") | Long("wholename") => {
+                path_glob.push(val_str(&mut parser)?);
+            }
+            Long("ipath") | Long("iwholename") => {
+                case_insensitive = true;
+                path_glob.push(val_str(&mut parser)?);
+            }
+            // symlink-target globs; -ilname adds case-insensitivity
+            Long("lname") => lname.push(val_str(&mut parser)?),
+            Long("ilname") => {
+                case_insensitive = true;
+                lname.push(val_str(&mut parser)?);
+            }
+            // access checks via faccessat (real uid/gid); Unix-only.
+            #[cfg(unix)]
+            Long("readable") => access |= meta::access::READ,
+            #[cfg(unix)]
+            Long("writable") => access |= meta::access::WRITE,
+            #[cfg(unix)]
+            Long("executable") => access |= meta::access::EXEC,
+            // -quit: stop after the first match (= --max-results 1).
+            Long("quit") => max_results = Some(1),
+            // no-ops: minifind always prints and already skips readdir races.
+            Long("print")
+            | Long("ignore-readdir-race")
+            | Long("noignore-readdir-race") => {}
             // `-print0` is rewritten to `--null` above; `--print0` (fd-style)
             // and `-0` (xargs/grep-style) are accepted directly.
             Short('0') | Long("null") | Long("print0") => {
@@ -364,6 +462,9 @@ where
         case_insensitive,
         file_type,
         meta,
+        path_glob: (!path_glob.is_empty()).then_some(path_glob),
+        lname: (!lname.is_empty()).then_some(lname),
+        access,
         exclude: (!exclude.is_empty()).then_some(exclude),
         null,
         path,
@@ -536,6 +637,69 @@ mod tests {
     fn test_parse_inner_find_follow_alias() {
         let dir = tmp_dir();
         assert!(run(&["-follow", &dir]).follow_symlinks);
+    }
+
+    #[test]
+    fn test_parse_inner_path_glob_aliases() {
+        let dir = tmp_dir();
+        assert!(run(&["-path", "*/x", &dir]).path_glob.is_some());
+        assert!(run(&["-wholename", "*/x", &dir]).path_glob.is_some());
+        let a = run(&["-ipath", "*/X", &dir]);
+        assert!(a.path_glob.is_some() && a.case_insensitive);
+    }
+
+    #[test]
+    fn test_parse_inner_lname_aliases() {
+        let dir = tmp_dir();
+        assert!(run(&["-lname", "*.so", &dir]).lname.is_some());
+        let a = run(&["-ilname", "*.SO", &dir]);
+        assert!(a.lname.is_some() && a.case_insensitive);
+    }
+
+    #[test]
+    fn test_parse_inner_newer_reads_reference_file() {
+        let dir = tmp_dir();
+        // an existing path is a valid reference; a missing one errors
+        assert_eq!(run(&["-newer", &dir, &dir]).meta.newer.len(), 1);
+        assert!(parse_argv(&["-newer", "/no/such/ref", &dir]).is_err());
+    }
+
+    #[test]
+    fn test_parse_inner_quit_caps_at_one() {
+        let dir = tmp_dir();
+        assert_eq!(run(&["-quit", &dir]).max_results, Some(1));
+    }
+
+    #[test]
+    fn test_parse_inner_noop_aliases_accepted() {
+        let dir = tmp_dir();
+        assert!(parse_argv(&["-print", &dir]).is_ok());
+        assert!(parse_argv(&["-ignore_readdir_race", &dir]).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_inner_links_inum_aliases() {
+        let dir = tmp_dir();
+        assert!(run(&["-links", "2", &dir]).meta.links.is_some());
+        assert!(run(&["-inum", "+0", &dir]).meta.inum.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_inner_nouser_nogroup() {
+        let dir = tmp_dir();
+        assert!(run(&["-nouser", &dir]).meta.nouser);
+        assert!(run(&["-nogroup", &dir]).meta.nogroup);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_inner_access_aliases() {
+        let dir = tmp_dir();
+        assert_eq!(run(&["-readable", &dir]).access, meta::access::READ);
+        let a = run(&["-writable", "-executable", &dir]);
+        assert_eq!(a.access, meta::access::WRITE | meta::access::EXEC);
     }
 
     #[test]

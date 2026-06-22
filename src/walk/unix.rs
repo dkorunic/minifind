@@ -13,7 +13,7 @@ use crate::filetype::EntryType;
 use crate::meta::{self, Meta};
 use rustix::fs::{self, AtFlags, FileType as RFileType, Mode, OFlags, CWD};
 use rustix::io::Errno;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
@@ -182,6 +182,8 @@ fn do_stat(
         mode: u32::from(sx.stx_mode),
         uid: sx.stx_uid,
         gid: sx.stx_gid,
+        nlink: u64::from(sx.stx_nlink),
+        ino: sx.stx_ino,
     })
 }
 
@@ -196,6 +198,8 @@ fn to_statx_flags(mask: u32) -> rustix::fs::StatxFlags {
         (meta::mask::MODE, S::MODE),
         (meta::mask::UID, S::UID),
         (meta::mask::GID, S::GID),
+        (meta::mask::NLINK, S::NLINK),
+        (meta::mask::INO, S::INO),
     ];
     pairs.iter().fold(S::empty(), |acc, &(bit, flag)| {
         if mask & bit != 0 {
@@ -222,6 +226,8 @@ fn do_stat(
         mode: st.st_mode as u32,
         uid: st.st_uid,
         gid: st.st_gid,
+        nlink: st.st_nlink as u64,
+        ino: st.st_ino as u64,
     })
 }
 
@@ -231,6 +237,52 @@ fn stat_flags(follow: bool) -> AtFlags {
     } else {
         AtFlags::SYMLINK_NOFOLLOW
     }
+}
+
+/// `faccessat` for `-readable`/`-writable`/`-executable`. Checks the *real*
+/// uid/gid (no `AT_EACCESS`), like find's `access(2)`-based predicates.
+pub(crate) fn access_at(dir: &DirFd, name: &OsStr, mode: u8) -> bool {
+    do_access(dir, name, mode)
+}
+
+pub(crate) fn access_root(path: &Path, mode: u8) -> bool {
+    do_access(CWD, path, mode)
+}
+
+fn do_access(
+    dirfd: impl rustix::fd::AsFd,
+    path: impl rustix::path::Arg,
+    mode: u8,
+) -> bool {
+    use rustix::fs::Access;
+    let mut acc = Access::empty();
+    if mode & meta::access::READ != 0 {
+        acc |= Access::READ_OK;
+    }
+    if mode & meta::access::WRITE != 0 {
+        acc |= Access::WRITE_OK;
+    }
+    if mode & meta::access::EXEC != 0 {
+        acc |= Access::EXEC_OK;
+    }
+    fs::accessat(dirfd, path, acc, AtFlags::empty()).is_ok()
+}
+
+/// Reads a symlink's target (for `-lname`), relative to the parent dir fd.
+pub(crate) fn readlink_at(dir: &DirFd, name: &OsStr) -> Option<OsString> {
+    do_readlink(dir, name)
+}
+
+pub(crate) fn readlink_root(path: &Path) -> Option<OsString> {
+    do_readlink(CWD, path)
+}
+
+fn do_readlink(
+    dirfd: impl rustix::fd::AsFd,
+    path: impl rustix::path::Arg,
+) -> Option<OsString> {
+    let target = fs::readlinkat(dirfd, path, Vec::new()).ok()?;
+    Some(OsStr::from_bytes(target.to_bytes()).to_owned())
 }
 
 /// Resolves a `DT_UNKNOWN` entry's own type via a `statat` relative to its
