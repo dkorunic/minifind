@@ -13,9 +13,12 @@ cargo bench                   # run Criterion benchmarks (benches/)
 cargo clippy -- -D warnings   # lint (warnings as errors)
 cargo fmt                     # format code
 cargo fmt -- --check          # check formatting without modifying
+scdoc < man/minifind.1.scd > man/minifind.1   # regenerate the man page
 ```
 
 The minimum supported Rust version (`rust-version = "1.85.1"`) and `edition = "2021"` are declared in `Cargo.toml`. There is no pinned `rust-toolchain.toml`, so builds use whatever toolchain rustup has active.
+
+The man page is authored in `man/minifind.1.scd` ([scdoc](https://git.sr.ht/~sircmpwn/scdoc) markup) and the generated roff `man/minifind.1` is committed. Its `OPTIONS` section is maintained by hand, so **keep it in sync with `args.rs`'s `HELP` and the README** when adding or changing flags, then regenerate with the command above.
 
 ## Code Style
 
