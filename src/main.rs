@@ -30,6 +30,14 @@ fn main() -> Result<(), Error> {
     #[cfg(unix)]
     let _ = minifind::raise_nofile_limit();
 
+    // process-wide nice +19; SCHED_IDLE is applied per worker in run()
+    #[cfg(target_os = "linux")]
+    if args.idle {
+        if let Err(e) = minifind::sched::lower_nice() {
+            eprintln!("minifind: could not lower process priority: {e}");
+        }
+    }
+
     // defer locking stdout to the output thread (StdoutLock is not Send)
     minifind::run(&args, || io::stdout().lock())
 }

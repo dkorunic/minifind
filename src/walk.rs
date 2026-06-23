@@ -382,6 +382,7 @@ mod tests {
     fn base_args(threads: usize) -> Args {
         Args {
             threads,
+            idle: false,
             path: vec![],
             follow_symlinks: false,
             one_filesystem: true,

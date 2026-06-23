@@ -35,6 +35,7 @@ impl Write for SharedSink {
 fn base_args(paths: Vec<PathBuf>, file_type: Vec<FileType>) -> Args {
     Args {
         threads: 2,
+        idle: false,
         path: paths,
         follow_symlinks: false,
         one_filesystem: true,

@@ -5,7 +5,7 @@
 .nh
 .ad l
 .\" Begin generated content:
-.TH "minifind" "1" "2026-06-22"
+.TH "minifind" "1" "2026-06-23"
 .P
 .SH NAME
 .P
@@ -52,7 +52,17 @@ Cross mount points.\& Alias: \fB--cross-filesystem\fR.\&
 .RE
 \fB-x\fR, \fB--threads\fR \fIN\fR
 .RS 4
-Number of worker threads (2.\&.\&=65535).\& Default: the logical CPU count.\&
+Number of worker threads (2.\&.\&=65535).\& Default: the logical CPU count, or 2
+when \fB--idle\fR is given without an explicit \fB--threads\fR.\&
+.P
+.RE
+\fB--idle\fR
+.RS 4
+Run unobtrusively (Linux only).\& The walker pool is placed in the
+\fISCHED_IDLE\fR CPU scheduling class (per worker thread), the whole process is
+lowered to nice +19, and the worker count defaults to 2 unless \fB--threads\fR
+is given.\& The main and output threads stay normally scheduled, so results
+keep draining while the walkers only run when the CPU is otherwise idle.\&
 .P
 .RE
 \fB-d\fR, \fB--max-depth\fR \fIN\fR
@@ -306,6 +316,15 @@ Does any C header exist below here?\& Stop at the first match:
 .nf
 .RS 4
 minifind -name \&'*\&.h\&' --quit \&. && echo "found one"
+.fi
+.RE
+.P
+Scan a large tree in the background without disturbing foreground work
+(Linux):
+.P
+.nf
+.RS 4
+minifind --idle -name \&'*\&.log\&' /var
 .fi
 .RE
 .P

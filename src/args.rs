@@ -19,8 +19,14 @@ pub struct Args {
     /// by `--no-one-filesystem`/`--cross-filesystem`.
     pub one_filesystem: bool,
 
-    /// Number of worker threads (`-x`/`--threads`).
+    /// Number of worker threads (`-x`/`--threads`). With `--idle` and no
+    /// explicit `--threads`, this defaults to 2 instead of the CPU count.
     pub threads: usize,
+
+    /// Run unobtrusively (`--idle`, Linux): the walker pool runs in the
+    /// SCHED_IDLE CPU class, the process nice is lowered to +19, and the
+    /// default thread count drops to 2.
+    pub idle: bool,
 
     /// Maximum depth to traverse (`-d`/`--max-depth`).
     pub max_depth: Option<usize>,
@@ -139,6 +145,7 @@ Options:
       --lname <GLOB>       Glob over a symlink's target [alias: -lname; -ilname adds -i]
       --readable, --writable, --executable  Filter by access (real uid/gid) [aliases: -readable/-writable/-executable]
       --quit               Stop after the first match (= --max-results 1) [alias: -quit]
+      --idle               Run unobtrusively: SCHED_IDLE worker pool, nice +19, 2 threads (Linux)
   -h, --help               Print help
   -V, --version            Print version
 ";
@@ -241,7 +248,13 @@ where
 
     let mut follow_symlinks = false;
     let mut one_filesystem = true;
-    let mut threads = default_threads();
+    // None until --threads is given, so --idle can pick a different default.
+    let mut threads: Option<usize> = None;
+    // Only Linux has a parse arm for --idle, so keep it immutable elsewhere.
+    #[cfg(target_os = "linux")]
+    let mut idle = false;
+    #[cfg(not(target_os = "linux"))]
+    let idle = false;
     let mut max_depth = None;
     let mut min_depth = None;
     let mut max_scan_rate = None;
@@ -272,7 +285,11 @@ where
                 one_filesystem = false;
             }
             Short('x') | Long("threads") => {
-                threads = parse_threads(&parser.value()?.string()?)?;
+                threads = Some(parse_threads(&parser.value()?.string()?)?);
+            }
+            #[cfg(target_os = "linux")]
+            Long("idle") => {
+                idle = true;
             }
             Short('d') | Long("max-depth") => {
                 max_depth = Some(parser.value()?.parse()?);
@@ -449,10 +466,16 @@ where
             vec![FileType::Directory, FileType::File, FileType::Symlink];
     }
 
+    // --idle defaults to 2 threads; an explicit --threads always wins.
+    // unwrap_or_else so default_threads() (an OS query) is skipped when set.
+    let threads =
+        threads.unwrap_or_else(|| if idle { 2 } else { default_threads() });
+
     Ok(Outcome::Run(Box::new(Args {
         follow_symlinks,
         one_filesystem,
         threads,
+        idle,
         max_depth,
         min_depth,
         max_scan_rate,
@@ -579,6 +602,30 @@ mod tests {
             vec![FileType::Directory, FileType::File, FileType::Symlink]
         );
         assert_eq!(a.path.len(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_inner_idle_defaults_to_two_threads() {
+        let dir = tmp_dir();
+        let a = run(&["--idle", &dir]);
+        assert!(a.idle);
+        assert_eq!(a.threads, 2);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_inner_idle_explicit_threads_wins() {
+        let dir = tmp_dir();
+        // explicit --threads overrides --idle's 2-thread default, either order
+        assert_eq!(run(&["--idle", "--threads", "8", &dir]).threads, 8);
+        assert_eq!(run(&["--threads", "8", "--idle", &dir]).threads, 8);
+    }
+
+    #[test]
+    fn test_parse_inner_idle_off_by_default() {
+        let a = run(&[&tmp_dir()]);
+        assert!(!a.idle);
     }
 
     #[test]

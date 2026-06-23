@@ -36,6 +36,13 @@ metadata predicates are the only ones that require a `stat`, and it is paid
 lazily — only when such a predicate is set, and only for entries that pass the
 cheaper name/type filters first.
 
+On Linux, `--idle` runs the walk unobtrusively: the worker pool is placed in
+the `SCHED_IDLE` CPU class, the whole process is lowered to nice +19, and the
+thread count defaults to 2 (an explicit `--threads` still wins). The main and
+output threads stay normally scheduled, so results keep draining even while the
+walkers only run when the CPU is otherwise idle — handy for background scans on
+a busy machine.
+
 ## Related projects
 
 Other notable projects in this space:
@@ -93,6 +100,7 @@ Options:
       --lname <GLOB>       Glob over a symlink's target [alias: -lname; -ilname adds -i]
       --readable, --writable, --executable  Filter by access (real uid/gid) [aliases: -readable/-writable/-executable]
       --quit               Stop after the first match (= --max-results 1) [alias: -quit]
+      --idle               Run unobtrusively: SCHED_IDLE worker pool, nice +19, 2 threads (Linux)
   -h, --help               Print help
   -V, --version            Print version
 ```

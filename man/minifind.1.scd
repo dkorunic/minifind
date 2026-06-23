@@ -38,7 +38,15 @@ example *-name*, *-type*, *-size*, *-newer*), noted below as aliases.
 	Cross mount points. Alias: *--cross-filesystem*.
 
 *-x*, *--threads* _N_
-	Number of worker threads (2..=65535). Default: the logical CPU count.
+	Number of worker threads (2..=65535). Default: the logical CPU count, or 2
+	when *--idle* is given without an explicit *--threads*.
+
+*--idle*
+	Run unobtrusively (Linux only). The walker pool is placed in the
+	_SCHED_IDLE_ CPU scheduling class (per worker thread), the whole process is
+	lowered to nice +19, and the worker count defaults to 2 unless *--threads*
+	is given. The main and output threads stay normally scheduled, so results
+	keep draining while the walkers only run when the CPU is otherwise idle.
 
 *-d*, *--max-depth* _N_
 	Descend at most _N_ levels below each starting path (the root is depth 0).
@@ -218,6 +226,13 @@ Does any C header exist below here? Stop at the first match:
 
 ```
 minifind -name '*.h' --quit . && echo "found one"
+```
+
+Scan a large tree in the background without disturbing foreground work
+(Linux):
+
+```
+minifind --idle -name '*.log' /var
 ```
 
 # EXIT STATUS

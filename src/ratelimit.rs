@@ -71,9 +71,8 @@ impl<C: Clock + Clone> Limiter<C> {
             }
             match self.try_acquire() {
                 Ok(()) => return true,
-                // wait may be zero if the next cell is already due; the
-                // loop simply re-checks. cap the nap so shutdown stays
-                // responsive.
+                // wait may be zero (cell already due) → re-check; cap the nap
+                // so shutdown stays responsive
                 Err(wait) => thread::sleep(wait.min(MAX_NAP)),
             }
         }

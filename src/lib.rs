@@ -38,6 +38,7 @@ pub mod interrupt;
 pub mod meta;
 pub mod ratelimit;
 pub mod regex;
+pub mod sched;
 pub mod walk;
 
 use args::Args;
@@ -198,6 +199,9 @@ where
     let limiter =
         args.max_scan_rate.and_then(NonZeroU32::new).map(Limiter::new);
 
+    #[cfg(target_os = "linux")]
+    let idle = args.idle;
+
     // Every per-entry filter runs in the walker threads, cheapest first, so
     // statx is reached only after type/name/regex have kept the entry.
     walk::walk_parallel(
@@ -206,6 +210,11 @@ where
         limiter.as_ref(),
         exclude,
         || {
+            // per worker, best-effort: a failure leaves it at normal prio
+            #[cfg(target_os = "linux")]
+            if idle {
+                let _ = sched::set_idle_cpu();
+            }
             let filetype = filetype_proto;
             let shutdown = Arc::clone(&shutdown);
             // reborrow so the move-visitor captures `&GlobSet`, not copies
