@@ -43,10 +43,11 @@ example *-name*, *-type*, *-size*, *-newer*), noted below as aliases.
 
 *--idle*
 	Run unobtrusively (Linux only). The walker pool is placed in the
-	_SCHED_IDLE_ CPU scheduling class (per worker thread), the whole process is
-	lowered to nice +19, and the worker count defaults to 2 unless *--threads*
-	is given. The main and output threads stay normally scheduled, so results
-	keep draining while the walkers only run when the CPU is otherwise idle.
+	_SCHED_IDLE_ CPU scheduling class and the _IOPRIO_CLASS_IDLE_ I/O scheduling
+	class (both per worker thread), the whole process is lowered to nice +19,
+	and the worker count defaults to 2 unless *--threads* is given. The main and
+	output threads stay normally scheduled, so results keep draining while the
+	walkers only run when the CPU and disk are otherwise idle.
 
 *-d*, *--max-depth* _N_
 	Descend at most _N_ levels below each starting path (the root is depth 0).
@@ -251,7 +252,7 @@ minifind --idle -name '*.log' /var
 
 # SEE ALSO
 
-*find*(1), *fd*(1), *xargs*(1)
+*find*(1), *fd*(1), *xargs*(1), *ionice*(1), *nice*(1)
 
 # AUTHORS
 

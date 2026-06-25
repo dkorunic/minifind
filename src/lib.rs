@@ -210,10 +210,11 @@ where
         limiter.as_ref(),
         exclude,
         || {
-            // per worker, best-effort: a failure leaves it at normal prio
+            // per worker, best-effort; failures leave it at normal priority
             #[cfg(target_os = "linux")]
             if idle {
                 let _ = sched::set_idle_cpu();
+                let _ = sched::set_idle_io();
             }
             let filetype = filetype_proto;
             let shutdown = Arc::clone(&shutdown);

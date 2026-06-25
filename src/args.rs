@@ -24,8 +24,8 @@ pub struct Args {
     pub threads: usize,
 
     /// Run unobtrusively (`--idle`, Linux): the walker pool runs in the
-    /// SCHED_IDLE CPU class, the process nice is lowered to +19, and the
-    /// default thread count drops to 2.
+    /// SCHED_IDLE CPU class and IOPRIO_CLASS_IDLE I/O class, the process nice
+    /// is lowered to +19, and the default thread count drops to 2.
     pub idle: bool,
 
     /// Maximum depth to traverse (`-d`/`--max-depth`).
@@ -145,7 +145,7 @@ Options:
       --lname <GLOB>       Glob over a symlink's target [alias: -lname; -ilname adds -i]
       --readable, --writable, --executable  Filter by access (real uid/gid) [aliases: -readable/-writable/-executable]
       --quit               Stop after the first match (= --max-results 1) [alias: -quit]
-      --idle               Run unobtrusively: SCHED_IDLE worker pool, nice +19, 2 threads (Linux)
+      --idle               Run unobtrusively: idle CPU + I/O scheduling, nice +19, 2 threads (Linux)
   -h, --help               Print help
   -V, --version            Print version
 ";
