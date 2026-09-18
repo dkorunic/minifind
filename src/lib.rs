@@ -108,6 +108,16 @@ impl Drop for BatchSender {
 /// # Errors
 ///
 /// Signal registration failure, an invalid glob/regex pattern, or no paths.
+///
+/// # Panics
+///
+/// If the output thread panicked — its panic is propagated here on join, so
+/// a write failure or poisoned sink surfaces rather than being swallowed.
+// One long wiring function on purpose: the per-thread visitor closure captures
+// ~20 filter locals, and splitting it would mean threading them all through a
+// struct for no behavioural gain. `glob_name`/`glob_lname` mirror the
+// `--name`/`-lname` flags they hold, so the near-collision is intended.
+#[allow(clippy::too_many_lines, clippy::similar_names)]
 pub fn run<W, F>(args: &Args, make_out: F) -> Result<(), Error>
 where
     W: Write,
@@ -304,6 +314,7 @@ where
 /// `find`/`fd` do. Best-effort; returns the resulting soft limit (`None` =
 /// unlimited).
 #[cfg(unix)]
+#[must_use]
 pub fn raise_nofile_limit() -> Option<u64> {
     use rustix::process::{getrlimit, setrlimit, Resource};
     let mut lim = getrlimit(Resource::Nofile);

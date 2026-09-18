@@ -10,6 +10,9 @@ use std::thread;
 
 /// Parsed CLI configuration. Fields are public with a deliberately stable
 /// shape so the pipeline and tests can build it by struct literal.
+// The bools are find(1)'s boolean options, one field each; grouping them into
+// a flags type would only obscure which CLI switch each one is.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Clone)]
 pub struct Args {
     /// Follow symlinks (`-f`/`-L`/`--follow-symlinks`).
@@ -24,8 +27,8 @@ pub struct Args {
     pub threads: usize,
 
     /// Run unobtrusively (`--idle`, Linux): the walker pool runs in the
-    /// SCHED_IDLE CPU class and IOPRIO_CLASS_IDLE I/O class, the process nice
-    /// is lowered to +19, and the default thread count drops to 2.
+    /// `SCHED_IDLE` CPU class and `IOPRIO_CLASS_IDLE` I/O class, the process
+    /// nice is lowered to +19, and the default thread count drops to 2.
     pub idle: bool,
 
     /// Maximum depth to traverse (`-d`/`--max-depth`).
@@ -179,11 +182,14 @@ impl Args {
 
 /// Default worker-thread count: logical CPU count, falling back to 2.
 fn default_threads() -> usize {
-    thread::available_parallelism().map(|n| n.get()).unwrap_or(2)
+    thread::available_parallelism().map_or(2, std::num::NonZero::get)
 }
 
 /// Pure parser over any argv-like iterator (first item is the binary name).
 /// Process-exit-free so it can be unit-tested directly.
+// Length is one `match` arm per supported option; splitting the arms across
+// helpers would scatter the flag table that is easiest to audit in one place.
+#[allow(clippy::too_many_lines)]
 fn parse_inner<I>(args: I) -> Result<Outcome, Error>
 where
     I: IntoIterator,
@@ -275,13 +281,13 @@ where
         match arg {
             Short('h') | Long("help") => return Ok(Outcome::Help),
             Short('V') | Long("version") => return Ok(Outcome::Version),
-            Short('f') | Short('L') | Long("follow-symlinks") => {
+            Short('f' | 'L') | Long("follow-symlinks") => {
                 follow_symlinks = true;
             }
-            Short('o') | Long("one-filesystem") | Long("xdev") => {
+            Short('o') | Long("one-filesystem" | "xdev") => {
                 one_filesystem = true;
             }
-            Long("no-one-filesystem") | Long("cross-filesystem") => {
+            Long("no-one-filesystem" | "cross-filesystem") => {
                 one_filesystem = false;
             }
             Short('x') | Long("threads") => {
@@ -413,10 +419,10 @@ where
             #[cfg(unix)]
             Long("nogroup") => meta.nogroup = true,
             // full-path globs; -ipath/-iwholename add case-insensitivity
-            Long("path") | Long("wholename") => {
+            Long("path" | "wholename") => {
                 path_glob.push(val_str(&mut parser)?);
             }
-            Long("ipath") | Long("iwholename") => {
+            Long("ipath" | "iwholename") => {
                 case_insensitive = true;
                 path_glob.push(val_str(&mut parser)?);
             }
@@ -436,12 +442,12 @@ where
             // -quit: stop after the first match (= --max-results 1).
             Long("quit") => max_results = Some(1),
             // no-ops: minifind always prints and already skips readdir races.
-            Long("print")
-            | Long("ignore-readdir-race")
-            | Long("noignore-readdir-race") => {}
+            Long(
+                "print" | "ignore-readdir-race" | "noignore-readdir-race",
+            ) => {}
             // `-print0` is rewritten to `--null` above; `--print0` (fd-style)
             // and `-0` (xargs/grep-style) are accepted directly.
-            Short('0') | Long("null") | Long("print0") => {
+            Short('0') | Long("null" | "print0") => {
                 null = true;
             }
             Value(val) => path.push(parse_paths(&val.string()?)?),

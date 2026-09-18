@@ -55,8 +55,12 @@ impl<C: Clock + Clone> Limiter<C> {
         Self { inner, clock }
     }
 
-    /// Tries to spend one token without blocking; on refusal returns how long
-    /// until one is available.
+    /// Tries to spend one token without blocking.
+    ///
+    /// # Errors
+    ///
+    /// `Err(duration)` when the bucket is empty — the wait until the next
+    /// token, not a failure.
     pub fn try_acquire(&self) -> Result<(), Duration> {
         self.inner.check().map_err(|nu| nu.wait_time_from(self.clock.now()))
     }

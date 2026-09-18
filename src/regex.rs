@@ -10,7 +10,12 @@ use std::path::Path;
 use std::os::unix::ffi::OsStrExt;
 
 /// Builds a byte `RegexSet` from the optional `--regex` patterns (empty set
-/// matches nothing). Errors on an invalid pattern.
+/// matches nothing).
+///
+/// # Errors
+///
+/// If any pattern is not a valid regex, or the set exceeds the compiled-size
+/// limit.
 pub fn build_regex_set(
     patterns: Option<&[String]>,
     case_insensitive: bool,

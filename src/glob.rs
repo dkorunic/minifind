@@ -5,7 +5,11 @@ use anyhow::{Context, Error};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 /// Builds a `GlobSet` from the optional `--name` patterns (empty set matches
-/// nothing). Errors on an invalid pattern.
+/// nothing).
+///
+/// # Errors
+///
+/// If any pattern is not a valid glob, or the set fails to compile.
 pub fn build_glob_set(
     patterns: Option<&[String]>,
     case_insensitive: bool,

@@ -22,7 +22,10 @@ const STOP_SIGNALS: &[i32] = &[signal::SIGTERM, signal::SIGINT];
 
 /// Points every termination signal at `shutdown`, so the walker can stop
 /// gracefully (it polls the flag) instead of being killed mid-traversal.
-/// Errors if a handler cannot be registered.
+///
+/// # Errors
+///
+/// If a handler cannot be registered for one of the termination signals.
 ///
 /// # Examples
 ///

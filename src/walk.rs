@@ -43,6 +43,7 @@ impl Entry {
     /// Final path component (used for `--name` glob matching); falls back to
     /// the whole path for roots like `/`.
     #[inline]
+    #[must_use]
     pub fn file_name(&self) -> &OsStr {
         self.path.file_name().unwrap_or_else(|| self.path.as_os_str())
     }
@@ -95,6 +96,11 @@ impl<'a> StatAt<'a> {
     }
 
     /// Fetches the metadata fields selected by `mask` (see [`crate::meta`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the `statx`/`statat` failure if the entry can't be stat'd
+    /// (vanished, or a permission or I/O error).
     pub fn fetch(&self, mask: u32) -> std::io::Result<Meta> {
         match self.src {
             StatSrc::Child { dir, name } => {
@@ -107,6 +113,7 @@ impl<'a> StatAt<'a> {
     }
 
     /// `faccessat` for the `meta::access` mode bits (`-readable`/…).
+    #[must_use]
     pub fn access(&self, mode: u8) -> bool {
         match self.src {
             StatSrc::Child { dir, name } => {
@@ -117,6 +124,7 @@ impl<'a> StatAt<'a> {
     }
 
     /// The symlink target (for `-lname`); `None` if not a symlink / unreadable.
+    #[must_use]
     pub fn readlink(&self) -> Option<std::ffi::OsString> {
         match self.src {
             StatSrc::Child { dir, name } => platform::readlink_at(dir, name),
@@ -208,18 +216,15 @@ fn run_worker<V: FnMut(Entry, &StatAt) -> WalkState>(
         if ctx.quit.load(Ordering::Relaxed) {
             return;
         }
-        match find_task(local, injector, stealers) {
-            Some(task) => {
-                backoff.reset();
-                process(ctx, task, local, visitor);
-                ctx.pending.fetch_sub(1, Ordering::SeqCst);
+        if let Some(task) = find_task(local, injector, stealers) {
+            backoff.reset();
+            process(ctx, &task, local, visitor);
+            ctx.pending.fetch_sub(1, Ordering::SeqCst);
+        } else {
+            if ctx.pending.load(Ordering::SeqCst) == 0 {
+                return;
             }
-            None => {
-                if ctx.pending.load(Ordering::SeqCst) == 0 {
-                    return;
-                }
-                backoff.snooze();
-            }
+            backoff.snooze();
         }
     }
 }
@@ -252,7 +257,7 @@ fn descends_into(ty: EntryType, args: &Args) -> bool {
 
 fn process<V: FnMut(Entry, &StatAt) -> WalkState>(
     ctx: &WalkCtx,
-    task: Task,
+    task: &Task,
     local: &Worker<Task>,
     visitor: &mut V,
 ) {
@@ -272,7 +277,7 @@ fn process<V: FnMut(Entry, &StatAt) -> WalkState>(
             return;
         }
     }
-    descend(ctx, &task, local, visitor);
+    descend(ctx, task, local, visitor);
 }
 
 fn descend<V: FnMut(Entry, &StatAt) -> WalkState>(

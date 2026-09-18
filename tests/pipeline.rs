@@ -189,7 +189,11 @@ fn output_is_each_path_followed_by_a_single_newline() {
 
     let segments: Vec<&[u8]> = bytes.split(|&b| b == b'\n').collect();
     // The split's final segment is empty (trailing newline); no others may be.
-    assert!(segments.last().unwrap().is_empty());
+    assert_eq!(
+        *segments.last().unwrap(),
+        b"",
+        "trailing segment after the final newline must be empty"
+    );
     for seg in &segments[..segments.len() - 1] {
         assert!(!seg.is_empty(), "no empty lines / no doubled newline");
     }
@@ -234,7 +238,11 @@ fn null_separator_terminates_each_path_with_nul() {
     // Splitting on NUL yields one non-empty segment per path plus a trailing
     // empty (from the final terminator), and total bytes == sum(len + 1).
     let segments: Vec<&[u8]> = bytes.split(|&b| b == 0).collect();
-    assert!(segments.last().unwrap().is_empty());
+    assert_eq!(
+        *segments.last().unwrap(),
+        b"",
+        "trailing segment after the final NUL must be empty"
+    );
     for seg in &segments[..segments.len() - 1] {
         assert!(!seg.is_empty(), "no doubled NUL / empty segment");
     }
@@ -252,8 +260,9 @@ fn null_separator_terminates_each_path_with_nul() {
 // partial batch is flushed on Drop. Every entry must appear exactly once.
 #[test]
 fn emits_every_entry_across_batch_boundaries() {
-    let tmp = TempDir::new().unwrap();
     const N: usize = 500; // well over BATCH_SIZE, spanning several batches
+
+    let tmp = TempDir::new().unwrap();
     for i in 0..N {
         std::fs::write(tmp.path().join(format!("f{i:04}.txt")), b"x").unwrap();
     }
@@ -507,7 +516,11 @@ fn nouser_excludes_owned_entries() {
     let mut args =
         base_args(vec![tmp.path().to_path_buf()], vec![FileType::File]);
     args.meta.nouser = true;
-    assert!(run_capture(&args).is_empty());
+    assert_eq!(
+        run_capture(&args),
+        Vec::<PathBuf>::new(),
+        "an owned file must not match -nouser"
+    );
 }
 
 #[test]

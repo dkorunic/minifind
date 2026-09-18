@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
 // SPDX-License-Identifier: MIT
 
-//! `--idle` scheduling (Linux): SCHED_IDLE + IOPRIO_CLASS_IDLE for the walker
-//! pool (per worker) plus nice +19 process-wide, so a heavy walk yields the
-//! CPU and disk to other work.
+//! `--idle` scheduling (Linux): `SCHED_IDLE` + `IOPRIO_CLASS_IDLE` for the
+//! walker pool (per worker) plus nice +19 process-wide, so a heavy walk
+//! yields the CPU and disk to other work.
 
 /// Moves the calling thread to SCHED_IDLE; called per walker so only the pool
 /// is de-prioritized while the output thread keeps draining.

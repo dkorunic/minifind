@@ -88,6 +88,14 @@ impl Comparison {
             Comparison::Less(n) => v < n,
         }
     }
+
+    /// Same comparison against an unsigned stat field (`-size`, `-links`,
+    /// `-inum`). Saturates instead of casting: a value above `i64::MAX` would
+    /// wrap to a negative number and flip `+N` from true to false. The parsed
+    /// threshold is always `<= i64::MAX`, so clamping preserves every verdict.
+    fn matches_u64(self, v: u64) -> bool {
+        self.matches(i64::try_from(v).unwrap_or(i64::MAX))
+    }
 }
 
 /// `-size [+-]?N(c|k|M|G|T)` — a unit suffix is required (no bare 512-byte
@@ -100,6 +108,10 @@ pub struct SizePred {
 }
 
 impl SizePred {
+    /// # Errors
+    ///
+    /// If `s` is empty, lacks a `c`/`k`/`M`/`G`/`T` unit suffix, or its
+    /// numeric part doesn't parse.
     pub fn parse(s: &str) -> Result<Self, Error> {
         let Some(last) = s.chars().last() else {
             return Err(anyhow!("empty --size value"));
@@ -121,7 +133,7 @@ impl SizePred {
     }
 
     fn matches(&self, size: u64) -> bool {
-        self.cmp.matches(size.div_ceil(self.unit) as i64)
+        self.cmp.matches_u64(size.div_ceil(self.unit))
     }
 }
 
@@ -155,14 +167,23 @@ impl TimePred {
         Ok(TimePred { cmp: Comparison::parse(s)?, unit_secs, field })
     }
 
+    /// # Errors
+    ///
+    /// If `s` isn't a find-style `N`/`+N`/`-N` number.
     pub fn mtime(s: &str, unit_secs: i64) -> Result<Self, Error> {
         Self::new(s, unit_secs, TimeField::Mtime)
     }
 
+    /// # Errors
+    ///
+    /// If `s` isn't a find-style `N`/`+N`/`-N` number.
     pub fn ctime(s: &str, unit_secs: i64) -> Result<Self, Error> {
         Self::new(s, unit_secs, TimeField::Ctime)
     }
 
+    /// # Errors
+    ///
+    /// If `s` isn't a find-style `N`/`+N`/`-N` number.
     pub fn atime(s: &str, unit_secs: i64) -> Result<Self, Error> {
         Self::new(s, unit_secs, TimeField::Atime)
     }
@@ -196,6 +217,10 @@ pub struct PermPred {
 }
 
 impl PermPred {
+    /// # Errors
+    ///
+    /// If the mode is neither a valid octal value nor a parsable symbolic
+    /// mode (`u+w,g-x`).
     pub fn parse(s: &str) -> Result<Self, Error> {
         let (kind, rest) = if let Some(r) = s.strip_prefix('/') {
             (PermKind::AnyOf, r)
@@ -207,7 +232,7 @@ impl PermPred {
         Ok(PermPred { mode: parse_mode(rest)?, kind })
     }
 
-    fn matches(&self, st_mode: u32) -> bool {
+    fn matches(self, st_mode: u32) -> bool {
         let m = st_mode & 0o7777;
         match self.kind {
             PermKind::Exact => m == self.mode,
@@ -236,6 +261,9 @@ fn parse_mode(s: &str) -> Result<u32, Error> {
 
 /// Builds a numeric mask from a comma-separated symbolic mode applied to a
 /// zero base (e.g. `u+w` → 0o200, `a+rx` → 0o555, `u+s` → 0o4100).
+// r/w/x/s/t are the mode letters themselves; longer names would obscure the
+// chmod(1) grammar this mirrors.
+#[allow(clippy::many_single_char_names)]
 fn parse_symbolic_mode(s: &str) -> Result<u32, Error> {
     let mut mode = 0u32;
     for clause in s.split(',') {
@@ -333,16 +361,20 @@ pub struct IdPred {
 }
 
 impl IdPred {
+    /// # Errors
+    ///
+    /// If `s` isn't a find-style `N`/`+N`/`-N` number.
     pub fn parse(s: &str) -> Result<Self, Error> {
         Ok(IdPred { cmp: Comparison::parse(s)? })
     }
 
+    #[must_use]
     pub fn exact(id: u32) -> Self {
         IdPred { cmp: Comparison::Exact(i64::from(id)) }
     }
 
     fn matches(&self, value: u64) -> bool {
-        self.cmp.matches(value as i64)
+        self.cmp.matches_u64(value)
     }
 }
 
@@ -356,14 +388,17 @@ pub struct NewerPred {
 }
 
 impl NewerPred {
+    #[must_use]
     pub fn newer(ref_mtime: i64) -> Self {
         NewerPred { ref_mtime, field: TimeField::Mtime }
     }
 
+    #[must_use]
     pub fn anewer(ref_mtime: i64) -> Self {
         NewerPred { ref_mtime, field: TimeField::Atime }
     }
 
+    #[must_use]
     pub fn cnewer(ref_mtime: i64) -> Self {
         NewerPred { ref_mtime, field: TimeField::Ctime }
     }
@@ -379,14 +414,20 @@ impl NewerPred {
 }
 
 /// Modification time (whole seconds since the epoch) of `path`, the reference
-/// for the `-newer` family. Errors if the file can't be stat'd.
+/// for the `-newer` family.
+///
+/// # Errors
+///
+/// If `path` can't be stat'd or its mtime is unavailable.
 pub fn file_mtime(path: &std::path::Path) -> Result<i64, Error> {
     use std::time::UNIX_EPOCH;
     let mtime =
         std::fs::metadata(path).and_then(|m| m.modified()).map_err(|e| {
             anyhow!("cannot stat reference file '{}': {e}", path.display())
         })?;
-    Ok(mtime.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64))
+    Ok(mtime
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX)))
 }
 
 /// All active metadata predicates for one run. Built at arg-parse; the walker
@@ -410,6 +451,7 @@ pub struct Predicates {
 
 impl Predicates {
     /// Whether any predicate is set (gates the entire stat path).
+    #[must_use]
     pub fn is_active(&self) -> bool {
         self.size.is_some()
             || !self.times.is_empty()
@@ -424,6 +466,7 @@ impl Predicates {
     }
 
     /// The `statx` field mask covering exactly the active predicates.
+    #[must_use]
     pub fn mask(&self) -> u32 {
         let mut m = 0;
         if self.size.is_some() {
@@ -455,6 +498,7 @@ impl Predicates {
 
     /// Whether `meta` satisfies every active predicate (`now` = run start, for
     /// the time predicates).
+    #[must_use]
     pub fn matches(&self, meta: &Meta, now: i64) -> bool {
         if let Some(s) = &self.size {
             if !s.matches(meta.size) {
@@ -502,14 +546,19 @@ impl Predicates {
 
 /// Wall-clock now in whole seconds since the Unix epoch — captured once at run
 /// start as the reference for the time predicates.
+#[must_use]
 pub fn now_secs() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Resolves `-user` to a uid: NSS name lookup first, then a numeric fallback.
+///
+/// # Errors
+///
+/// If `name` is neither a known user nor a bare numeric uid.
 #[cfg(unix)]
 pub fn resolve_user(name: &str) -> Result<u32, Error> {
     if let Some(uid) = nss_uid(name) {
@@ -522,6 +571,10 @@ pub fn resolve_user(name: &str) -> Result<u32, Error> {
 }
 
 /// Resolves `-group` to a gid: NSS name lookup first, then a numeric fallback.
+///
+/// # Errors
+///
+/// If `name` is neither a known group nor a bare numeric gid.
 #[cfg(unix)]
 pub fn resolve_group(name: &str) -> Result<u32, Error> {
     if let Some(gid) = nss_gid(name) {
@@ -549,10 +602,10 @@ fn nss_uid(name: &str) -> Option<u32> {
         let rc = unsafe {
             libc::getpwnam_r(
                 cname.as_ptr(),
-                &mut pwd,
+                &raw mut pwd,
                 buf.as_mut_ptr(),
                 buf.len(),
-                &mut result,
+                &raw mut result,
             )
         };
         if rc == 0 {
@@ -582,10 +635,10 @@ fn nss_gid(name: &str) -> Option<u32> {
         let rc = unsafe {
             libc::getgrnam_r(
                 cname.as_ptr(),
-                &mut grp,
+                &raw mut grp,
                 buf.as_mut_ptr(),
                 buf.len(),
-                &mut result,
+                &raw mut result,
             )
         };
         if rc == 0 {
@@ -637,10 +690,10 @@ fn nss_user_exists(uid: u32) -> bool {
         let rc = unsafe {
             libc::getpwuid_r(
                 uid,
-                &mut pwd,
+                &raw mut pwd,
                 buf.as_mut_ptr(),
                 buf.len(),
-                &mut result,
+                &raw mut result,
             )
         };
         if rc == 0 {
@@ -670,10 +723,10 @@ fn nss_group_exists(gid: u32) -> bool {
         let rc = unsafe {
             libc::getgrgid_r(
                 gid,
-                &mut grp,
+                &raw mut grp,
                 buf.as_mut_ptr(),
                 buf.len(),
-                &mut result,
+                &raw mut result,
             )
         };
         if rc == 0 {

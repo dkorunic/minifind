@@ -61,6 +61,13 @@ fn dir_flags(follow: bool) -> OFlags {
 }
 
 /// `(dev, ino)` of `path`, following symlinks (used to seed roots).
+///
+/// `dev_t`/`ino_t` width and signedness vary per Unix (`dev_t` is `i32` on
+/// macOS, `u64` on Linux), so the widening is sign-extending there. That is
+/// harmless: the pair is an opaque identity token, only ever compared for
+/// equality (same-filesystem and symlink-loop checks), and sign extension is
+/// injective — distinct `dev_t`s stay distinct.
+#[allow(clippy::cast_sign_loss)]
 pub(crate) fn path_id(path: &Path) -> io::Result<(u64, u64)> {
     let st = fs::statat(CWD, path, AtFlags::empty())?;
     Ok((st.st_dev as u64, st.st_ino as u64))
@@ -102,7 +109,9 @@ fn open_abs(full: &Path, flags: OFlags) -> io::Result<DirFd> {
     Ok(fs::openat(CWD, full, flags, Mode::empty())?)
 }
 
-/// `(dev, ino)` of an open directory (for same-fs and loop checks).
+/// `(dev, ino)` of an open directory (for same-fs and loop checks). Widening
+/// is an identity token, as in [`path_id`].
+#[allow(clippy::cast_sign_loss)]
 pub(crate) fn dir_id(fd: &DirFd) -> io::Result<(u64, u64)> {
     let st = fs::fstat(fd)?;
     Ok((st.st_dev as u64, st.st_ino as u64))
@@ -219,14 +228,15 @@ fn do_stat(
 ) -> io::Result<Meta> {
     let st = fs::statat(dirfd, path, stat_flags(follow))?;
     Ok(Meta {
-        size: st.st_size as u64,
+        // off_t is signed but stat never reports a negative size
+        size: u64::try_from(st.st_size).unwrap_or(0),
         mtime: st.st_mtime as i64,
         ctime: st.st_ctime as i64,
         atime: st.st_atime as i64,
-        mode: st.st_mode as u32,
+        mode: u32::from(st.st_mode),
         uid: st.st_uid,
         gid: st.st_gid,
-        nlink: st.st_nlink as u64,
+        nlink: u64::from(st.st_nlink),
         ino: st.st_ino as u64,
     })
 }

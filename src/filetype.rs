@@ -34,6 +34,7 @@ pub struct FileType {
 
 impl FileType {
     /// Builds the type mask from the parsed `--type` selectors.
+    #[must_use]
     pub fn new(selectors: &[crate::args::FileType]) -> Self {
         use crate::args::FileType as A;
         let mut selected = 0u8;
@@ -62,6 +63,7 @@ impl FileType {
 
     /// Whether an entry of `ty` at `path` should be skipped.
     #[inline]
+    #[must_use]
     pub fn ignore_filetype(self, ty: EntryType, path: &Path) -> bool {
         if Self::type_bit(ty) & self.selected == 0 {
             return true;
@@ -86,6 +88,7 @@ impl FileType {
     /// Whether the entry is empty: a directory with no children, else a
     /// zero-byte file.
     #[inline]
+    #[must_use]
     pub fn is_empty(path: &Path, is_dir: bool) -> bool {
         if is_dir {
             path.read_dir().is_ok_and(|mut r| r.next().is_none())
