@@ -31,7 +31,7 @@ rustix = { version = "1.1.5", features = ["fs", "process"] }
 libc = "0.2.189"
 globset = "0.4.19"
 regex = "1.13.1"
-normpath = "1.5.1"
+normpath = "1.5.2"
 itertools = "0.15.0"
 
 [dev-dependencies]
